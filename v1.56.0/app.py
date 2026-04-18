@@ -1,16 +1,27 @@
 """
-Race Telemetry Analyzer
-Streamlit v1.56.0 – st.iframe デモアプリ
+GT7 Race Telemetry Analyzer
+Streamlit v1.56.0 – st.iframe / st.menu_button デモアプリ
 
-st.iframe の 3 つの使い方を実演します:
+【バージョン選択機能】
+サイドバー最上部の「🔖 Streamlit バージョン」セレクターで確認したいバージョンを
+切り替えられます。ワークスペースルート配下の v*.*.* フォルダを自動検出し、
+対象バージョンの app.py に定義された show() 関数を動的にロードして呼び出します。
+将来バージョンのデモを追加する際は v*/app.py に show() 関数を定義してください。
+
+【このバージョンで実演する機能 (v1.56.0)】
+st.iframe の 3 つの使い方:
   Tab 1: HTML 文字列 (インライン HTML でラップサマリーカード)
   Tab 2: ローカル HTML ファイル (Plotly テレメトリレポートを Path で渡す)
-  Tab 3: 外部 URL (st.iframe の公式ドキュメントを埋め込み)
+  Tab 3: 外部 URL (OpenStreetMap を埋め込み)
+st.menu_button の使い方:
+  Tab 4: ツールバー形式のメニューボタン (エクスポート / チャート切替 / 統計ライン)
 """
 
 from __future__ import annotations
 
+import importlib.util
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from datetime import datetime
@@ -25,6 +36,34 @@ import streamlit as st
 # ---------------------------------------------------------------------------
 # デフォルト: リポジトリルート直下の共通サンプルデータフォルダ
 _DEFAULT_DATA_DIR = Path(__file__).parent.parent / "data"
+
+# このファイルが属するバージョン識別子（フォルダ名と一致させること）
+_THIS_VERSION = "v1.56.0"
+
+# ---------------------------------------------------------------------------
+# バージョン発見ヘルパー
+# ---------------------------------------------------------------------------
+def scan_versions() -> list[str]:
+    """ワークスペースルート配下の v*.*.* フォルダを自動検出してバージョンリストを返す。
+
+    各バージョンの app.py が show() 関数を公開していれば、
+    そのバージョンのデモをこのエントリーポイントから呼び出せる。
+    """
+    root = Path(__file__).parent.parent
+    versions: list[tuple[int, int, int, str]] = []
+    for folder in root.iterdir():
+        if not folder.is_dir():
+            continue
+        m = re.match(r"^v(\d+)\.(\d+)\.(\d+)$", folder.name)
+        if m and (folder / "app.py").exists():
+            versions.append((int(m.group(1)), int(m.group(2)), int(m.group(3)), folder.name))
+    versions.sort()
+    return [v[3] for v in versions]
+
+
+# ---------------------------------------------------------------------------
+# レポート出力先 (Tab 2 で Plotly HTML を書き出すフォルダ)
+# ---------------------------------------------------------------------------
 REPORTS_DIR = Path(__file__).parent / "reports"
 REPORTS_DIR.mkdir(exist_ok=True)
 
@@ -424,16 +463,52 @@ def build_telemetry_html(meta: LapMeta, df: pd.DataFrame, out_path: Path) -> Non
 # Streamlit アプリ本体
 # ---------------------------------------------------------------------------
 st.set_page_config(
-    page_title="レーシングシミュレータ テレメトリ解析 │ st.iframe デモ",
+    page_title="GT7 テレメトリ解析 │ st.iframe デモ",
     page_icon="🏎",
     layout="wide",
 )
 
-st.title("🏎  レーシングシミュレータ テレメトリ解析")
+st.title("🏎  GT7 レースシミュレーター テレメトリ解析")
 st.caption(
     "**Streamlit v1.56.0** 新機能 `st.iframe` のデモアプリ — "
     "富士スピードウェイ / GR Supra / RM タイヤ / ドライ条件"
 )
+
+# ---------------------------------------------------------------------------
+# バージョン選択: サイドバー最上部
+# ---------------------------------------------------------------------------
+_available_versions = scan_versions()
+_default_idx = _available_versions.index(_THIS_VERSION) if _THIS_VERSION in _available_versions else 0
+_selected_version: str = st.sidebar.selectbox(
+    "🔖 Streamlit バージョン",
+    _available_versions,
+    index=_default_idx,
+    key="version_selector",
+    help="デモを確認したい Streamlit バージョンを選択してください。"
+         " 各バージョンのフォルダ (v*.*.*/app.py) が自動検出されます。",
+)
+st.sidebar.divider()
+
+# 別バージョンが選択された場合はそちらの app.py の show() を呼び出して終了
+if _selected_version != _THIS_VERSION:
+    _target_app = Path(__file__).parent.parent / _selected_version / "app.py"
+    _spec = importlib.util.spec_from_file_location(
+        f"app_{_selected_version.replace('.', '_')}", _target_app
+    )
+    if _spec is None or _spec.loader is None:
+        st.error(f"`{_selected_version}/app.py` を読み込めませんでした。")
+        st.stop()
+    _mod = importlib.util.module_from_spec(_spec)
+    sys.modules[_spec.name] = _mod
+    _spec.loader.exec_module(_mod)  # type: ignore[union-attr]
+    if not hasattr(_mod, "show"):
+        st.error(
+            f"`{_selected_version}/app.py` に `show()` 関数が定義されていません。\n\n"
+            "各バージョンの `app.py` は `def show():` を公開してください。"
+        )
+        st.stop()
+    _mod.show()
+    st.stop()
 
 # ---------------------------------------------------------------------------
 # サイドバー: 共通選択UI
