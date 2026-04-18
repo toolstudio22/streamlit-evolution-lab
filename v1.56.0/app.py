@@ -444,6 +444,13 @@ session_keys = list(sessions.keys())
 with st.sidebar:
     st.header("データ選択")
     selected_session = st.selectbox("セッション", session_keys, key="session")
+    # セッション状態に古いキーが残存している場合、sessions に存在しない値が
+    # selectbox から返ることがある (KeyError の原因)。先頭キーへフォールバック。
+    if selected_session not in sessions:
+        selected_session = session_keys[0] if session_keys else None
+    if selected_session is None:
+        st.error("利用可能なセッションデータがありません。")
+        st.stop()
     laps = sessions[selected_session]
     lap_labels = [f"Lap {m.lap_no}  ({m.lap_time_display})" for m in laps]
     selected_lap_idx = st.selectbox(
