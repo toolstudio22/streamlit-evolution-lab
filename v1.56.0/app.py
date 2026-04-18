@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import importlib.util
 import re
+import sqlite3
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,6 +40,42 @@ _DEFAULT_DATA_DIR = Path(__file__).parent.parent / "data"
 
 # このファイルが属するバージョン識別子（フォルダ名と一致させること）
 _THIS_VERSION = "v1.56.0"
+
+# アクセスカウンター DB（リポジトリルート直下・全バージョン共用）
+_DB_FILE = Path(__file__).parent.parent / "access_counter.db"
+
+# ---------------------------------------------------------------------------
+# アクセスカウンター ヘルパー
+# ---------------------------------------------------------------------------
+def _init_db() -> None:
+    """access_counts テーブルを初期化する（初回のみ CREATE）。"""
+    with sqlite3.connect(_DB_FILE) as con:
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS access_counts (
+                version TEXT PRIMARY KEY,
+                total   INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+
+
+def _increment_counter(version: str) -> None:
+    """指定バージョンのカウントをアトミックに +1 する。"""
+    with sqlite3.connect(_DB_FILE) as con:
+        con.execute("""
+            INSERT INTO access_counts (version, total) VALUES (?, 1)
+            ON CONFLICT(version) DO UPDATE SET total = total + 1
+        """, (version,))
+
+
+def _load_counts() -> dict[str, int]:
+    """全バージョンのアクセス数を {version: total} 形式で返す。"""
+    _init_db()
+    with sqlite3.connect(_DB_FILE) as con:
+        rows = con.execute(
+            "SELECT version, total FROM access_counts ORDER BY version"
+        ).fetchall()
+    return {row[0]: row[1] for row in rows}
+
 
 # ---------------------------------------------------------------------------
 # バージョン発見ヘルパー
@@ -561,6 +598,23 @@ with st.sidebar:
 - ラップ数: `{len(laps)}`
 """
     )
+
+    # -----------------------------------------------------------------------
+    # アクセスカウンター（Cloud のみカウント・セッション先頭で 1 回）
+    # -----------------------------------------------------------------------
+    st.divider()
+    if "_visited" not in st.session_state:
+        st.session_state["_visited"] = True
+        if st.secrets.get("ENVIRONMENT") == "cloud":
+            _increment_counter(_THIS_VERSION)
+    counts = _load_counts()
+    if counts:
+        st.caption("📊 バージョン別アクセス数")
+        for ver, cnt in counts.items():
+            st.metric(label=ver, value=cnt)
+    else:
+        st.caption("📊 バージョン別アクセス数")
+        st.caption("（Cloud デプロイ後に集計されます）")
 
 df_selected = load_csv(selected_meta.path)
 
