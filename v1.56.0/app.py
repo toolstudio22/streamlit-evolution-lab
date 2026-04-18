@@ -23,7 +23,8 @@ import streamlit as st
 # ---------------------------------------------------------------------------
 # 定数
 # ---------------------------------------------------------------------------
-DATA_DIR = Path(r"C:\ts22_rep\gt7-telemetry-logger\data")
+# デフォルト: リポジトリルート直下の共通サンプルデータフォルダ
+_DEFAULT_DATA_DIR = Path(__file__).parent.parent / "data"
 REPORTS_DIR = Path(__file__).parent / "reports"
 REPORTS_DIR.mkdir(exist_ok=True)
 
@@ -75,9 +76,12 @@ class LapMeta:
 # ファイル解析 & セッショングルーピング
 # ---------------------------------------------------------------------------
 @st.cache_data
-def load_all_meta() -> list[LapMeta]:
+def load_all_meta(data_dir: Path) -> list[LapMeta]:
+    """指定フォルダの CSV を読み込んで LapMeta リストを返す。
+    data_dir を引数にすることで、パス変更時に @st.cache_data が自動再実行される。
+    """
     metas: list[LapMeta] = []
-    for f in sorted(DATA_DIR.glob("*.csv")):
+    for f in sorted(data_dir.glob("*.csv")):
         m = _FNAME_RE.match(f.name)
         if not m:
             continue
@@ -432,17 +436,30 @@ st.caption(
 )
 
 # ---------------------------------------------------------------------------
-# データ読み込み・セッショングルーピング
-# ---------------------------------------------------------------------------
-all_metas = load_all_meta()
-sessions = group_sessions(all_metas)
-session_keys = list(sessions.keys())
-
-# ---------------------------------------------------------------------------
 # サイドバー: 共通選択UI
 # ---------------------------------------------------------------------------
 with st.sidebar:
     st.header("データ選択")
+
+    # --- データフォルダ選択 ---
+    data_dir_input = st.text_input(
+        "データフォルダ",
+        value=str(_DEFAULT_DATA_DIR),
+        help="CSV ファイルが格納されたフォルダのパスを入力してください。",
+        key="data_dir",
+    )
+    data_dir = Path(data_dir_input)
+    if not data_dir.is_dir():
+        st.error(f"フォルダが見つかりません:\n`{data_dir}`")
+        st.stop()
+
+    # ---------------------------------------------------------------------------
+    # データ読み込み・セッショングルーピング
+    # ---------------------------------------------------------------------------
+    all_metas = load_all_meta(data_dir)
+    sessions = group_sessions(all_metas)
+    session_keys = list(sessions.keys())
+
     selected_session = st.selectbox("セッション", session_keys, key="session")
     # セッション状態に古いキーが残存している場合、sessions に存在しない値が
     # selectbox から返ることがある (KeyError の原因)。先頭キーへフォールバック。
