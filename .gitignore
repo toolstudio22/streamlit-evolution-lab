@@ -1,6 +1,9 @@
 # 実行時生成ファイル
 v1.56.0/reports/
 
+# 記事ファイル
+articles/
+
 # Python
 __pycache__/
 *.py[cod]
