@@ -1,5 +1,5 @@
 """
-GT7 Race Telemetry Analyzer
+Race Telemetry Analyzer
 Streamlit v1.56.0 – st.iframe デモアプリ
 
 st.iframe の 3 つの使い方を実演します:
@@ -424,12 +424,12 @@ def build_telemetry_html(meta: LapMeta, df: pd.DataFrame, out_path: Path) -> Non
 # Streamlit アプリ本体
 # ---------------------------------------------------------------------------
 st.set_page_config(
-    page_title="GT7 テレメトリ解析 │ st.iframe デモ",
+    page_title="レーシングシミュレータ テレメトリ解析 │ st.iframe デモ",
     page_icon="🏎",
     layout="wide",
 )
 
-st.title("🏎  GT7 レースシミュレーター テレメトリ解析")
+st.title("🏎  レーシングシミュレータ テレメトリ解析")
 st.caption(
     "**Streamlit v1.56.0** 新機能 `st.iframe` のデモアプリ — "
     "富士スピードウェイ / GR Supra / RM タイヤ / ドライ条件"
