@@ -468,10 +468,11 @@ df_selected = load_csv(selected_meta.path)
 # ---------------------------------------------------------------------------
 # タブ
 # ---------------------------------------------------------------------------
-tab1, tab2, tab3 = st.tabs([
+tab1, tab2, tab3, tab4 = st.tabs([
     "📊 Tab 1 — HTML 文字列",
     "📈 Tab 2 — ローカル HTML ファイル",
-    "� Tab 3 — 外部 URL (地図)",
+    "🗺 Tab 3 — 外部 URL (地図)",
+    "🛠 Tab 4 — st.menu_button",
 ])
 
 # =====================================================
@@ -627,3 +628,246 @@ st.iframe(
 
     with col_left:
         st.iframe(map_url, height=ext_height)
+
+# =====================================================
+# Tab 4: st.menu_button デモ (ツールバー構築)
+# =====================================================
+with tab4:
+    st.subheader("🛠 ツールバー構築 — st.menu_button デモ")
+
+    col_main4, col_api4 = st.columns([3, 2], gap="large")
+
+    with col_api4:
+        st.subheader("st.menu_button API ポイント")
+        st.markdown(
+            """
+`st.menu_button` は **クリックでドロップダウンを展開** するボタンウィジェット。  
+`st.button` と同様に、選択されたオプションを返し次のリランで `None` にリセットされます。
+
+```python
+action = st.menu_button(
+    label="エクスポート",
+    options=["CSV", "JSON", "HTML"],
+    type="primary",               # "primary" / "secondary" / "tertiary"
+    icon=":material/download:",   # Material アイコン or 絵文字
+    width="content",              # "content" / "stretch" / int(px)
+    format_func=lambda x: x,     # 表示名変換
+    disabled=False,
+    help="ツールチップ",
+)
+if action == "CSV":
+    ...  # 選択時の処理
+```
+
+| パラメータ | 説明 |
+|---|---|
+| `type` | ボタンスタイル (primary/secondary/tertiary) |
+| `icon` | Material アイコン or 絵文字 |
+| `width` | ボタン幅の制御 |
+| `format_func` | オプション表示名の変換 |
+| `disabled` | ボタンを無効化 |
+| `on_click` | 選択時コールバック |
+
+> `st.selectbox` と異なり、ボタンラベルは変わらず  
+> 返り値は次のリランで `None` に戻ります。
+"""
+        )
+
+    with col_main4:
+        # --- セッション状態初期化 ---
+        if "mb_chart" not in st.session_state:
+            st.session_state.mb_chart = "speed"
+        if "mb_stat" not in st.session_state:
+            st.session_state.mb_stat = "max"
+
+        # ---- ツールバー行 ----
+        st.markdown("#### ツールバー")
+        tb1, tb2, tb3, tb4_col, tb_space = st.columns([1.3, 1.5, 1.3, 1.0, 3.0])
+
+        with tb1:
+            export_action = st.menu_button(
+                "エクスポート",
+                options=["CSV 形式", "JSON 形式", "HTML レポート"],
+                type="primary",
+                icon=":material/download:",
+                help="テレメトリデータをエクスポート",
+                key="mb_export",
+            )
+
+        with tb2:
+            chart_action = st.menu_button(
+                "チャート切替",
+                options=["speed", "throttle_brake", "rpm_gear", "tyre_temp"],
+                format_func=lambda x: {
+                    "speed": "📈 スピード",
+                    "throttle_brake": "🎮 スロットル/ブレーキ",
+                    "rpm_gear": "⚙ RPM & ギア",
+                    "tyre_temp": "🌡 タイヤ温度",
+                }[x],
+                icon=":material/bar_chart:",
+                help="表示するチャートを変更",
+                key="mb_chart_btn",
+            )
+
+        with tb3:
+            stat_action = st.menu_button(
+                "統計ライン",
+                options=["max", "mean", "min"],
+                format_func=lambda x: {
+                    "max": "最大値",
+                    "mean": "平均値",
+                    "min": "最小値",
+                }[x],
+                icon=":material/analytics:",
+                help="統計ラインの種類を変更",
+                key="mb_stat_btn",
+            )
+
+        with tb4_col:
+            st.menu_button(
+                "詳細",
+                options=["比較モード", "オーバーレイ", "ラップ差分"],
+                icon=":material/more_horiz:",
+                type="tertiary",
+                disabled=True,
+                help="近日公開予定",
+                key="mb_more",
+            )
+
+        # ---- アクション処理 ----
+        if chart_action:
+            st.session_state.mb_chart = chart_action
+        if stat_action:
+            st.session_state.mb_stat = stat_action
+
+        if export_action == "CSV 形式":
+            csv_bytes = df_selected.to_csv(index=False).encode("utf-8")
+            st.download_button(
+                "⬇ CSV をダウンロード",
+                data=csv_bytes,
+                file_name=f"telemetry_{selected_meta.circuit}_lap{selected_meta.lap_no}.csv",
+                mime="text/csv",
+                key="dl_csv4",
+            )
+        elif export_action == "JSON 形式":
+            json_bytes = df_selected.to_json(
+                orient="records", force_ascii=False
+            ).encode("utf-8")
+            st.download_button(
+                "⬇ JSON をダウンロード",
+                data=json_bytes,
+                file_name=f"telemetry_{selected_meta.circuit}_lap{selected_meta.lap_no}.json",
+                mime="application/json",
+                key="dl_json4",
+            )
+        elif export_action == "HTML レポート":
+            out_html4 = REPORTS_DIR / "telemetry_menu.html"
+            with st.spinner("HTML レポートを生成中..."):
+                build_telemetry_html(selected_meta, df_selected, out_html4)
+            st.success(f"HTML レポートを生成しました: `{out_html4}`")
+
+        st.divider()
+
+        # ---- チャート表示 ----
+        _chart_meta: dict[str, tuple[str, list[str], list[str]]] = {
+            "speed": (
+                "スピード (km/h)",
+                ["speed_kmh"],
+                ["#58a6ff"],
+            ),
+            "throttle_brake": (
+                "スロットル / ブレーキ (%)",
+                ["throttle_pct", "brake_pct"],
+                ["#56d364", "#f85149"],
+            ),
+            "rpm_gear": (
+                "RPM",
+                ["engine_rpm"],
+                ["#d2a8ff"],
+            ),
+            "tyre_temp": (
+                "タイヤ温度 (°C)",
+                ["tyre_temp_fl", "tyre_temp_fr", "tyre_temp_rl", "tyre_temp_rr"],
+                ["#79c0ff", "#56d364", "#ffa657", "#f85149"],
+            ),
+        }
+        _stat_labels = {"max": "最大値", "mean": "平均値", "min": "最小値"}
+
+        cur_chart = st.session_state.mb_chart
+        cur_stat = st.session_state.mb_stat
+        chart_title4, chart_cols4, chart_colors4 = _chart_meta[cur_chart]
+
+        st.caption(
+            f"表示中: **{chart_title4}**  |  統計ライン: **{_stat_labels[cur_stat]}**"
+        )
+
+        t_axis = (
+            df_selected.index / len(df_selected) * selected_meta.lap_time_ms / 1000
+        )
+        fig4 = go.Figure()
+
+        for col_name, color in zip(chart_cols4, chart_colors4):
+            r, g, b = int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
+            fig4.add_trace(
+                go.Scatter(
+                    x=t_axis,
+                    y=df_selected[col_name],
+                    name=col_name,
+                    line=dict(color=color, width=1.5),
+                    fill="tozeroy",
+                    fillcolor=f"rgba({r},{g},{b},0.10)",
+                )
+            )
+            if cur_stat == "max":
+                stat_val = float(df_selected[col_name].max())
+            elif cur_stat == "mean":
+                stat_val = float(df_selected[col_name].mean())
+            else:
+                stat_val = float(df_selected[col_name].min())
+
+            fig4.add_hline(
+                y=stat_val,
+                line_dash="dash",
+                line_color=color,
+                opacity=0.6,
+                annotation_text=f"{_stat_labels[cur_stat]}: {stat_val:.1f}",
+                annotation_position="top right",
+                annotation_font_color=color,
+            )
+
+        fig4.update_layout(
+            paper_bgcolor="#0d1117",
+            plot_bgcolor="#161b22",
+            font=dict(color="#8b949e"),
+            xaxis=dict(
+                title="Time (s)", gridcolor="#21262d", zerolinecolor="#30363d"
+            ),
+            yaxis=dict(
+                title=chart_title4, gridcolor="#21262d", zerolinecolor="#30363d"
+            ),
+            height=420,
+            margin=dict(l=60, r=20, t=20, b=60),
+            legend=dict(
+                orientation="h",
+                y=-0.18,
+                bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#c9d1d9"),
+            ),
+        )
+        st.plotly_chart(fig4, use_container_width=True)
+
+        # ---- type パラメータ比較デモ ----
+        st.divider()
+        st.markdown("#### `type` パラメータ比較")
+        tc1, tc2, tc3 = st.columns(3)
+        for col_t, type_val in zip([tc1, tc2, tc3], ["primary", "secondary", "tertiary"]):
+            with col_t:
+                res = st.menu_button(
+                    type_val,
+                    options=["項目 A", "項目 B", "項目 C"],
+                    type=type_val,  # type: ignore[arg-type]
+                    width="stretch",
+                    key=f"type_demo_{type_val}",
+                )
+                if res:
+                    st.caption(f"選択: **{res}**")
