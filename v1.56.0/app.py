@@ -41,15 +41,26 @@ _DEFAULT_DATA_DIR = Path(__file__).parent.parent / "data"
 # このファイルが属するバージョン識別子（フォルダ名と一致させること）
 _THIS_VERSION = "v1.56.0"
 
-# アクセスカウンター DB（リポジトリルート直下・全バージョン共用）
-_DB_FILE = Path(__file__).parent.parent / "access_counter.db"
-
 # ---------------------------------------------------------------------------
 # アクセスカウンター ヘルパー
 # ---------------------------------------------------------------------------
+def _db_file() -> Path:
+    """DB ファイルパスを返す。
+    - Cloud 環境: /tmp/ は書き込み可能なため /tmp/access_counter.db を使用
+    - ローカル環境: リポジトリルート直下（全バージョン共用）
+    Streamlit Community Cloud の /mount/src/ は読み取り専用のため注意。
+    """
+    try:
+        if st.secrets.get("ENVIRONMENT") == "cloud":
+            return Path("/tmp/access_counter.db")
+    except Exception:
+        pass
+    return Path(__file__).parent.parent / "access_counter.db"
+
+
 def _init_db() -> None:
     """access_counts テーブルを初期化する（初回のみ CREATE）。"""
-    with sqlite3.connect(_DB_FILE) as con:
+    with sqlite3.connect(_db_file()) as con:
         con.execute("""
             CREATE TABLE IF NOT EXISTS access_counts (
                 version TEXT PRIMARY KEY,
@@ -59,8 +70,11 @@ def _init_db() -> None:
 
 
 def _increment_counter(version: str) -> None:
-    """指定バージョンのカウントをアトミックに +1 する。"""
-    with sqlite3.connect(_DB_FILE) as con:
+    """指定バージョンのカウントをアトミックに +1 する。
+    テーブル未作成の場合も _init_db() で初期化してから実行する。
+    """
+    _init_db()
+    with sqlite3.connect(_db_file()) as con:
         con.execute("""
             INSERT INTO access_counts (version, total) VALUES (?, 1)
             ON CONFLICT(version) DO UPDATE SET total = total + 1
@@ -70,7 +84,7 @@ def _increment_counter(version: str) -> None:
 def _load_counts() -> dict[str, int]:
     """全バージョンのアクセス数を {version: total} 形式で返す。"""
     _init_db()
-    with sqlite3.connect(_DB_FILE) as con:
+    with sqlite3.connect(_db_file()) as con:
         rows = con.execute(
             "SELECT version, total FROM access_counts ORDER BY version"
         ).fetchall()
