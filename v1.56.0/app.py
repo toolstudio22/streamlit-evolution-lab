@@ -502,12 +502,12 @@ def build_telemetry_html(meta: LapMeta, df: pd.DataFrame, out_path: Path) -> Non
 # Streamlit アプリ本体
 # ---------------------------------------------------------------------------
 st.set_page_config(
-    page_title="GT7 テレメトリ解析 │ st.iframe デモ",
+    page_title="Racing Simulator Telemetry Analysis",
     page_icon="🏎",
     layout="wide",
 )
 
-st.title("🏎  GT7 レースシミュレーター テレメトリ解析")
+st.title("🏎  Racing Simulator Telemetry Analysis")
 st.caption(
     "**Streamlit v1.56.0** 新機能 `st.iframe` のデモアプリ — "
     "富士スピードウェイ / GR Supra / RM タイヤ / ドライ条件"
