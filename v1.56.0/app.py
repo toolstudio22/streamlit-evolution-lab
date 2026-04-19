@@ -21,11 +21,11 @@ from __future__ import annotations
 
 import importlib.util
 import re
-import sqlite3
 import sys
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -42,53 +42,69 @@ _DEFAULT_DATA_DIR = Path(__file__).parent.parent / "data"
 _THIS_VERSION = "v1.56.0"
 
 # ---------------------------------------------------------------------------
-# アクセスカウンター ヘルパー
+# アクセスカウンター ヘルパー (Supabase)
 # ---------------------------------------------------------------------------
-def _db_file() -> Path:
-    """DB ファイルパスを返す。
-    - Cloud 環境: /tmp/ は書き込み可能なため /tmp/access_counter.db を使用
-    - ローカル環境: リポジトリルート直下（全バージョン共用）
-    Streamlit Community Cloud の /mount/src/ は読み取り専用のため注意。
-    """
+@st.cache_resource
+def _get_supabase():
+    """Supabase クライアントを返す。secrets 未設定時は None を返す。"""
     try:
-        if st.secrets.get("ENVIRONMENT") == "cloud":
-            return Path("/tmp/access_counter.db")
+        from supabase import create_client
+        url = st.secrets["SUPABASE_URL"]
+        key = st.secrets["SUPABASE_PUBLISHABLE_KEY"]
+        return create_client(url, key)
     except Exception:
-        pass
-    return Path(__file__).parent.parent / "access_counter.db"
-
-
-def _init_db() -> None:
-    """access_counts テーブルを初期化する（初回のみ CREATE）。"""
-    with sqlite3.connect(_db_file()) as con:
-        con.execute("""
-            CREATE TABLE IF NOT EXISTS access_counts (
-                version TEXT PRIMARY KEY,
-                total   INTEGER NOT NULL DEFAULT 0
-            )
-        """)
+        return None
 
 
 def _increment_counter(version: str) -> None:
-    """指定バージョンのカウントをアトミックに +1 する。
-    テーブル未作成の場合も _init_db() で初期化してから実行する。
-    """
-    _init_db()
-    with sqlite3.connect(_db_file()) as con:
-        con.execute("""
-            INSERT INTO access_counts (version, total) VALUES (?, 1)
-            ON CONFLICT(version) DO UPDATE SET total = total + 1
-        """, (version,))
+    """access_logs テーブルに 1 行 INSERT する。失敗時はサイレントに無視。"""
+    client = _get_supabase()
+    if client is None:
+        return
+    try:
+        client.table("access_logs").insert({"version": version}).execute()
+    except Exception:
+        pass
 
 
 def _load_counts() -> dict[str, int]:
     """全バージョンのアクセス数を {version: total} 形式で返す。"""
-    _init_db()
-    with sqlite3.connect(_db_file()) as con:
-        rows = con.execute(
-            "SELECT version, total FROM access_counts ORDER BY version"
-        ).fetchall()
-    return {row[0]: row[1] for row in rows}
+    client = _get_supabase()
+    if client is None:
+        return {}
+    try:
+        res = client.table("access_logs").select("version").execute()
+        return dict(Counter(row["version"] for row in res.data))
+    except Exception:
+        return {}
+
+
+def _load_trend(version: str) -> "pd.DataFrame":
+    """指定バージョンの日別アクセス数 DataFrame を返す。
+    columns: ["date", "count"]
+    """
+    client = _get_supabase()
+    if client is None:
+        return pd.DataFrame(columns=["date", "count"])
+    try:
+        res = (
+            client.table("access_logs")
+            .select("accessed_at")
+            .eq("version", version)
+            .execute()
+        )
+        if not res.data:
+            return pd.DataFrame(columns=["date", "count"])
+        dates = [
+            row["accessed_at"][:10]  # "YYYY-MM-DD"
+            for row in res.data
+        ]
+        series = pd.Series(Counter(dates), name="count")
+        series.index.name = "date"
+        df = series.reset_index().sort_values("date")
+        return df
+    except Exception:
+        return pd.DataFrame(columns=["date", "count"])
 
 
 # ---------------------------------------------------------------------------
@@ -614,7 +630,7 @@ with st.sidebar:
     )
 
     # -----------------------------------------------------------------------
-    # アクセスカウンター（Cloud のみカウント・セッション先頭で 1 回）
+    # アクセスカウンター（セッション先頭で 1 回 Supabase に記録）
     # -----------------------------------------------------------------------
     st.divider()
     if "_visited" not in st.session_state:
@@ -624,11 +640,32 @@ with st.sidebar:
     counts = _load_counts()
     if counts:
         st.caption("📊 バージョン別アクセス数")
-        for ver, cnt in counts.items():
+        for ver, cnt in sorted(counts.items()):
             st.metric(label=ver, value=cnt)
+        # 当バージョンのアクセス推移グラフ
+        df_trend = _load_trend(_THIS_VERSION)
+        if not df_trend.empty:
+            st.caption("📈 アクセス推移（日別）")
+            fig_trend = go.Figure(
+                go.Scatter(
+                    x=df_trend["date"],
+                    y=df_trend["count"],
+                    mode="lines+markers",
+                    line={"color": "#4C9BE8"},
+                    marker={"size": 6},
+                )
+            )
+            fig_trend.update_layout(
+                margin={"l": 0, "r": 0, "t": 0, "b": 0},
+                height=160,
+                xaxis_title=None,
+                yaxis_title=None,
+                yaxis={"tickformat": "d"},
+            )
+            st.plotly_chart(fig_trend, use_container_width=True)
     else:
         st.caption("📊 バージョン別アクセス数")
-        st.caption("（Cloud デプロイ後に集計されます）")
+        st.caption("（Supabase 接続後に集計されます）")
 
 df_selected = load_csv(selected_meta.path)
 

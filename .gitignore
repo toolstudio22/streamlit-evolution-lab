@@ -2,6 +2,9 @@
 v1.56.0/reports/
 *.db
 
+# Streamlit secrets（機密情報）
+.streamlit/secrets.toml
+
 # 記事ファイル
 articles/
 
