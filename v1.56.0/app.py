@@ -79,34 +79,6 @@ def _load_counts() -> dict[str, int]:
         return {}
 
 
-def _load_trend(version: str) -> "pd.DataFrame":
-    """指定バージョンの日別アクセス数 DataFrame を返す。
-    columns: ["date", "count"]
-    """
-    client = _get_supabase()
-    if client is None:
-        return pd.DataFrame(columns=["date", "count"])
-    try:
-        res = (
-            client.table("access_logs")
-            .select("accessed_at")
-            .eq("version", version)
-            .execute()
-        )
-        if not res.data:
-            return pd.DataFrame(columns=["date", "count"])
-        dates = [
-            row["accessed_at"][:10]  # "YYYY-MM-DD"
-            for row in res.data
-        ]
-        series = pd.Series(Counter(dates), name="count")
-        series.index.name = "date"
-        df = series.reset_index().sort_values("date")
-        return df
-    except Exception:
-        return pd.DataFrame(columns=["date", "count"])
-
-
 # ---------------------------------------------------------------------------
 # バージョン発見ヘルパー
 # ---------------------------------------------------------------------------
@@ -642,27 +614,6 @@ with st.sidebar:
         st.caption("📊 バージョン別アクセス数")
         for ver, cnt in sorted(counts.items()):
             st.metric(label=ver, value=cnt)
-        # 当バージョンのアクセス推移グラフ
-        df_trend = _load_trend(_THIS_VERSION)
-        if not df_trend.empty:
-            st.caption("📈 アクセス推移（日別）")
-            fig_trend = go.Figure(
-                go.Scatter(
-                    x=df_trend["date"],
-                    y=df_trend["count"],
-                    mode="lines+markers",
-                    line={"color": "#4C9BE8"},
-                    marker={"size": 6},
-                )
-            )
-            fig_trend.update_layout(
-                margin={"l": 0, "r": 0, "t": 0, "b": 0},
-                height=160,
-                xaxis_title=None,
-                yaxis_title=None,
-                yaxis={"tickformat": "d"},
-            )
-            st.plotly_chart(fig_trend, use_container_width=True)
     else:
         st.caption("📊 バージョン別アクセス数")
         st.caption("（Supabase 接続後に集計されます）")
