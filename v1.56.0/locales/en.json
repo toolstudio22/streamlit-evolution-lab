@@ -102,5 +102,20 @@
   "card_accel_brake": "Throttle / Brake Usage (avg)",
   "card_throttle": "Throttle",
   "card_brake": "Brake",
-  "card_tire_temp": "Tyre Temp Avg (°C)"
+  "card_tire_temp": "Tyre Temp Avg (°C)",
+
+  "tab5_label": "📋 Tab 5 — st.dataframe New Features",
+  "tab5_subheader_df": "All-Laps Table — selection / alignment Demo",
+  "tab5_subheader_api": "st.dataframe API Points",
+  "tab5_api_desc": "Three major new features added to `st.dataframe` are demonstrated here.\n\n```python\nevent = st.dataframe(\n    df,\n    on_select=\"rerun\",\n    # ① Always keep exactly one row selected\n    selection_mode=\"single-row-required\",\n    # ② Programmatically set the initial selected row\n    selection_default={\"selection\": {\"rows\": [0], \"columns\": [], \"cells\": []}},  # 0-based index\n    column_config={\n        \"col_a\": st.column_config.NumberColumn(\n            # ③ Control text alignment per column\n            alignment=\"right\",  # \"left\" / \"center\" / \"right\"\n        ),\n    },\n    hide_index=True,\n)\n# Retrieve selected row indices\nrows = event.selection.rows  # [0]\n```\n\n| Parameter | Description |\n|---|---|\n| `selection_mode` | `\"single-row-required\"` keeps exactly one row selected at all times |\n| `selection_default` | `{\"selection\": {\"rows\": [N], ...}}` sets the initial selected row programmatically |\n| `alignment` | `\"left\"` / `\"center\"` / `\"right\"` controls text alignment within a column |\n\n> **Key point**: The lap selected in the sidebar is synced  \n> to the initial selected row in the table.  \n> Click any row to switch selection and update the chart.",
+  "tab5_col_lap": "Lap",
+  "tab5_col_time": "Time",
+  "tab5_col_max_speed": "Max Speed (km/h)",
+  "tab5_col_avg_speed": "Avg Speed (km/h)",
+  "tab5_col_throttle": "Throttle Avg (%)",
+  "tab5_col_brake": "Brake Avg (%)",
+  "tab5_col_rpm": "Max RPM",
+  "tab5_col_gear": "Top Gear",
+  "tab5_chart_caption": "Selected Lap: **Lap {lap_no}** — {lap_time}",
+  "tab5_hint": "Click a row to update the chart (initial row synced to sidebar lap selection)"
 }

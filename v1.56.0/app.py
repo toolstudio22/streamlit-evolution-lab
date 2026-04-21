@@ -85,7 +85,6 @@ def _load_counts() -> dict[str, int]:
 # locales/ja.json / locales/en.json を読み込んで UI 文字列辞書を返す
 # @st.cache_data によりリロード時の I/O を削減する
 # ---------------------------------------------------------------------------
-@st.cache_data
 def load_translations(lang: str) -> dict:
     """言語コードに対応する翻訳 JSON を読み込んで返す。"""
     locale_path = Path(__file__).parent / "locales" / f"{lang}.json"
@@ -597,7 +596,9 @@ with st.sidebar:
     sessions = group_sessions(all_metas)
     session_keys = list(sessions.keys())
 
-    selected_session = st.selectbox(tr["sidebar_session_label"], session_keys, key="session")
+    selected_session = st.selectbox(
+        tr["sidebar_session_label"], session_keys, key="session", filter_mode="fuzzy"
+    )
     # セッション状態に古いキーが残存している場合、sessions に存在しない値が
     # selectbox から返ることがある (KeyError の原因)。先頭キーへフォールバック。
     if selected_session not in sessions:
@@ -608,7 +609,11 @@ with st.sidebar:
     laps = sessions[selected_session]
     lap_labels = [f"Lap {m.lap_no}  ({m.lap_time_display})" for m in laps]
     selected_lap_idx = st.selectbox(
-        tr["sidebar_lap_label"], range(len(laps)), format_func=lambda i: lap_labels[i], key="lap"
+        tr["sidebar_lap_label"],
+        range(len(laps)),
+        format_func=lambda i: lap_labels[i],
+        key="lap",
+        filter_mode="fuzzy",
     )
     selected_meta = laps[selected_lap_idx]
 
@@ -657,11 +662,12 @@ df_selected = load_csv(selected_meta.path)
 # ---------------------------------------------------------------------------
 # タブ
 # ---------------------------------------------------------------------------
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     tr["tab1_label"],
     tr["tab2_label"],
     tr["tab3_label"],
     tr["tab4_label"],
+    tr["tab5_label"],
 ])
 
 # =====================================================
@@ -974,3 +980,138 @@ with tab4:
                 )
                 if res:
                     st.caption(tr["tab4_selection_caption"].format(res=res))
+
+# =====================================================
+# Tab 5: st.dataframe 新機能
+#   - selection_mode="single-row-required"
+#   - selection={"rows": [N]}  (初期選択行をプログラム指定)
+#   - column_config の alignment パラメータ
+# =====================================================
+with tab5:
+    col_df5, col_api5 = st.columns([3, 2], gap="large")
+
+    with col_api5:
+        st.subheader(tr["tab5_subheader_api"])
+        st.markdown(tr["tab5_api_desc"])
+
+    with col_df5:
+        st.subheader(tr["tab5_subheader_df"])
+        st.caption(tr["tab5_hint"])
+
+        # 全ラップの集計 DataFrame を作成
+        _laps_records = []
+        for _m in laps:
+            _df_m = load_csv(_m.path)
+            _laps_records.append({
+                "lap": _m.lap_no,
+                "time": _m.lap_time_display,
+                "time_ms": _m.lap_time_ms,
+                "max_speed": float(_df_m["speed_kmh"].max()),
+                "avg_speed": float(_df_m["speed_kmh"].mean()),
+                "throttle_avg": float(_df_m["throttle_pct"].mean()),
+                "brake_avg": float(_df_m["brake_pct"].mean()),
+                "max_rpm": float(_df_m["engine_rpm"].max()),
+                "top_gear": int(_df_m["gear"].max()),
+            })
+        _laps_df5 = pd.DataFrame(_laps_records).drop(columns=["time_ms"])
+
+        # サイドバーのラップ選択が変わったとき、テーブルの選択行を強制同期する
+        # (selection_default は初回レンダリング時のみ有効なため、
+        #  session_state を直接書き換えて widget state を上書きする)
+        _sync_key = "tab5_prev_lap_idx"
+        if st.session_state.get(_sync_key) != selected_lap_idx:
+            st.session_state["tab5_df"] = {
+                "selection": {"rows": [selected_lap_idx], "columns": [], "cells": []}
+            }
+            st.session_state[_sync_key] = selected_lap_idx
+
+        _df5_event = st.dataframe(
+            _laps_df5,
+            on_select="rerun",
+            selection_mode="single-row-required",
+            selection_default={"selection": {"rows": [selected_lap_idx], "columns": [], "cells": []}},
+            column_config={
+                "lap": st.column_config.NumberColumn(
+                    label=tr["tab5_col_lap"],
+                    format="%d",
+                    alignment="center",
+                ),
+                "time": st.column_config.TextColumn(
+                    label=tr["tab5_col_time"],
+                    alignment="center",
+                ),
+                "max_speed": st.column_config.NumberColumn(
+                    label=tr["tab5_col_max_speed"],
+                    format="%.0f",
+                    alignment="right",
+                ),
+                "avg_speed": st.column_config.NumberColumn(
+                    label=tr["tab5_col_avg_speed"],
+                    format="%.1f",
+                    alignment="right",
+                ),
+                "throttle_avg": st.column_config.ProgressColumn(
+                    label=tr["tab5_col_throttle"],
+                    min_value=0,
+                    max_value=100,
+                    format="%.1f%%",
+                ),
+                "brake_avg": st.column_config.ProgressColumn(
+                    label=tr["tab5_col_brake"],
+                    min_value=0,
+                    max_value=100,
+                    format="%.1f%%",
+                ),
+                "max_rpm": st.column_config.NumberColumn(
+                    label=tr["tab5_col_rpm"],
+                    format="%.0f",
+                    alignment="right",
+                ),
+                "top_gear": st.column_config.NumberColumn(
+                    label=tr["tab5_col_gear"],
+                    format="%d",
+                    alignment="center",
+                ),
+            },
+            hide_index=True,
+            use_container_width=True,
+            key="tab5_df",
+        )
+
+        # 選択行のチャートを描画
+        _sel5_rows = _df5_event.selection.rows
+        _sel5_idx = _sel5_rows[0] if _sel5_rows else selected_lap_idx
+        _sel5_meta = laps[_sel5_idx]
+        _sel5_df = load_csv(_sel5_meta.path)
+
+        st.caption(
+            tr["tab5_chart_caption"].format(
+                lap_no=_sel5_meta.lap_no,
+                lap_time=_sel5_meta.lap_time_display,
+            )
+        )
+
+        _t5 = _sel5_df.index / len(_sel5_df) * _sel5_meta.lap_time_ms / 1000
+        _fig5 = go.Figure()
+        _fig5.add_trace(go.Scatter(
+            x=_t5,
+            y=_sel5_df["speed_kmh"],
+            name="Speed (km/h)",
+            line=dict(color="#58a6ff", width=1.5),
+            fill="tozeroy",
+            fillcolor="rgba(88,166,255,0.10)",
+        ))
+        _fig5.update_layout(
+            paper_bgcolor="#0d1117",
+            plot_bgcolor="#161b22",
+            font=dict(color="#8b949e"),
+            xaxis=dict(title="Time (s)", gridcolor="#21262d", zerolinecolor="#30363d"),
+            yaxis=dict(title="Speed (km/h)", gridcolor="#21262d", zerolinecolor="#30363d"),
+            height=300,
+            margin=dict(l=60, r=20, t=20, b=60),
+            legend=dict(
+                orientation="h", y=-0.3, bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#c9d1d9"),
+            ),
+        )
+        st.plotly_chart(_fig5, use_container_width=True)
