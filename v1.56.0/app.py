@@ -20,6 +20,7 @@ st.menu_button の使い方:
 from __future__ import annotations
 
 import importlib.util
+import json
 import re
 import sys
 from collections import Counter
@@ -77,6 +78,19 @@ def _load_counts() -> dict[str, int]:
         return dict(Counter(row["version"] for row in res.data))
     except Exception:
         return {}
+
+
+# ---------------------------------------------------------------------------
+# 翻訳ヘルパー
+# locales/ja.json / locales/en.json を読み込んで UI 文字列辞書を返す
+# @st.cache_data によりリロード時の I/O を削減する
+# ---------------------------------------------------------------------------
+@st.cache_data
+def load_translations(lang: str) -> dict:
+    """言語コードに対応する翻訳 JSON を読み込んで返す。"""
+    locale_path = Path(__file__).parent / "locales" / f"{lang}.json"
+    with locale_path.open(encoding="utf-8") as f:
+        return json.load(f)
 
 
 # ---------------------------------------------------------------------------
@@ -211,7 +225,7 @@ def load_csv(path: Path) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 # Tab 1 ヘルパー: インライン HTML サマリーカード
 # ---------------------------------------------------------------------------
-def build_summary_html(meta: LapMeta, df: pd.DataFrame) -> str:
+def build_summary_html(meta: LapMeta, df: pd.DataFrame, tr: dict) -> str:
     speed_max = df["speed_kmh"].max()
     speed_avg = df["speed_kmh"].mean()
     throttle_avg = df["throttle_pct"].mean()
@@ -239,7 +253,7 @@ def build_summary_html(meta: LapMeta, df: pd.DataFrame) -> str:
     )
 
     html = f"""<!DOCTYPE html>
-<html lang="ja">
+<html lang="{tr['html_lang']}">
 <head>
 <meta charset="UTF-8">
 <style>
@@ -323,45 +337,45 @@ def build_summary_html(meta: LapMeta, df: pd.DataFrame) -> str:
 
 <!-- スピード / RPM / G -->
 <div class="card">
-  <div class="card-title">パフォーマンス指標</div>
+  <div class="card-title">{tr['card_perf_title']}</div>
   <div class="stats-grid">
     <div class="stat">
       <div class="stat-val">{speed_max:.0f}</div>
-      <div class="stat-label">最高速度 (km/h)</div>
+      <div class="stat-label">{tr['card_max_speed']}</div>
     </div>
     <div class="stat">
       <div class="stat-val">{speed_avg:.1f}</div>
-      <div class="stat-label">平均速度 (km/h)</div>
+      <div class="stat-label">{tr['card_avg_speed']}</div>
     </div>
     <div class="stat">
       <div class="stat-val">{rpm_max:.0f}</div>
-      <div class="stat-label">最高 RPM</div>
+      <div class="stat-label">{tr['card_max_rpm']}</div>
     </div>
     <div class="stat">
       <div class="stat-val">{top_gear}</div>
-      <div class="stat-label">使用最高ギア</div>
+      <div class="stat-label">{tr['card_max_gear']}</div>
     </div>
     <div class="stat">
       <div class="stat-val">{lat_g_max:.2f}</div>
-      <div class="stat-label">最大横 G</div>
+      <div class="stat-label">{tr['card_max_lat_g']}</div>
     </div>
     <div class="stat">
       <div class="stat-val">{lon_g_max:.2f}</div>
-      <div class="stat-label">最大縦 G</div>
+      <div class="stat-label">{tr['card_max_lon_g']}</div>
     </div>
   </div>
 </div>
 
 <!-- スロットル / ブレーキ -->
 <div class="card">
-  <div class="card-title">アクセル / ブレーキ 使用率 (平均)</div>
+  <div class="card-title">{tr['card_accel_brake']}</div>
   <div class="bar-row">
-    <div class="bar-label">スロットル</div>
+    <div class="bar-label">{tr['card_throttle']}</div>
     <div class="bar-bg"><div class="bar-fill-t" style="width:{t_w}%"></div></div>
     <div class="bar-pct">{throttle_avg:.1f}%</div>
   </div>
   <div class="bar-row">
-    <div class="bar-label">ブレーキ</div>
+    <div class="bar-label">{tr['card_brake']}</div>
     <div class="bar-bg"><div class="bar-fill-b" style="width:{b_w}%"></div></div>
     <div class="bar-pct">{brake_avg:.1f}%</div>
   </div>
@@ -369,7 +383,7 @@ def build_summary_html(meta: LapMeta, df: pd.DataFrame) -> str:
 
 <!-- タイヤ温度 -->
 <div class="card">
-  <div class="card-title">タイヤ温度 平均 (°C)</div>
+  <div class="card-title">{tr['card_tire_temp']}</div>
   <div class="tyre-grid">
     <div class="tyre-cell" style="background:{tyre_color(tyre_avg_fl)}22;border:1px solid {tyre_color(tyre_avg_fl)}66">
       <span class="tyre-lbl">FL</span>{tyre_avg_fl:.1f}°
@@ -507,11 +521,24 @@ st.set_page_config(
     layout="wide",
 )
 
-st.title("🏎  Racing Simulator Telemetry Analysis")
-st.caption(
-    "**Streamlit v1.56.0** 新機能 `st.iframe` のデモアプリ — "
-    "富士スピードウェイ / GR Supra / RM タイヤ / ドライ条件"
+# ---------------------------------------------------------------------------
+# 言語選択: サイドバー最上部
+# 選択された言語コードで locales/{lang}.json を読み込み、以降の UI 文字列は
+# すべて tr["キー"] 経由で参照する
+# ---------------------------------------------------------------------------
+_lang_options = ["日本語", "English"]
+_lang_codes = {"日本語": "ja", "English": "en"}
+_lang_display = st.sidebar.selectbox(
+    "🌐 言語 / Language",
+    _lang_options,
+    key="lang_selector",
 )
+_lang_code = _lang_codes[_lang_display]
+tr = load_translations(_lang_code)
+st.sidebar.divider()
+
+st.title(tr["app_title"])
+st.caption(tr["app_caption"])
 
 # ---------------------------------------------------------------------------
 # バージョン選択: サイドバー最上部
@@ -519,12 +546,11 @@ st.caption(
 _available_versions = scan_versions()
 _default_idx = _available_versions.index(_THIS_VERSION) if _THIS_VERSION in _available_versions else 0
 _selected_version: str = st.sidebar.selectbox(
-    "🔖 Streamlit バージョン",
+    tr["sidebar_version_label"],
     _available_versions,
     index=_default_idx,
     key="version_selector",
-    help="デモを確認したい Streamlit バージョンを選択してください。"
-         " 各バージョンのフォルダ (v*.*.*/app.py) が自動検出されます。",
+    help=tr["sidebar_version_help"],
 )
 st.sidebar.divider()
 
@@ -535,16 +561,13 @@ if _selected_version != _THIS_VERSION:
         f"app_{_selected_version.replace('.', '_')}", _target_app
     )
     if _spec is None or _spec.loader is None:
-        st.error(f"`{_selected_version}/app.py` を読み込めませんでした。")
+        st.error(tr["error_load_app"].format(version=_selected_version))
         st.stop()
     _mod = importlib.util.module_from_spec(_spec)
     sys.modules[_spec.name] = _mod
     _spec.loader.exec_module(_mod)  # type: ignore[union-attr]
     if not hasattr(_mod, "show"):
-        st.error(
-            f"`{_selected_version}/app.py` に `show()` 関数が定義されていません。\n\n"
-            "各バージョンの `app.py` は `def show():` を公開してください。"
-        )
+        st.error(tr["error_no_show_fn"].format(version=_selected_version))
         st.stop()
     _mod.show()
     st.stop()
@@ -553,18 +576,18 @@ if _selected_version != _THIS_VERSION:
 # サイドバー: 共通選択UI
 # ---------------------------------------------------------------------------
 with st.sidebar:
-    st.header("データ選択")
+    st.header(tr["sidebar_data_header"])
 
     # --- データフォルダ選択 ---
     data_dir_input = st.text_input(
-        "データフォルダ",
+        tr["sidebar_data_folder_label"],
         value=str(_DEFAULT_DATA_DIR),
-        help="CSV ファイルが格納されたフォルダのパスを入力してください。",
+        help=tr["sidebar_data_folder_help"],
         key="data_dir",
     )
     data_dir = Path(data_dir_input)
     if not data_dir.is_dir():
-        st.error(f"フォルダが見つかりません:\n`{data_dir}`")
+        st.error(tr["sidebar_folder_not_found"].format(data_dir=data_dir))
         st.stop()
 
     # ---------------------------------------------------------------------------
@@ -574,31 +597,36 @@ with st.sidebar:
     sessions = group_sessions(all_metas)
     session_keys = list(sessions.keys())
 
-    selected_session = st.selectbox("セッション", session_keys, key="session")
+    selected_session = st.selectbox(tr["sidebar_session_label"], session_keys, key="session")
     # セッション状態に古いキーが残存している場合、sessions に存在しない値が
     # selectbox から返ることがある (KeyError の原因)。先頭キーへフォールバック。
     if selected_session not in sessions:
         selected_session = session_keys[0] if session_keys else None
     if selected_session is None:
-        st.error("利用可能なセッションデータがありません。")
+        st.error(tr["sidebar_no_session"])
         st.stop()
     laps = sessions[selected_session]
     lap_labels = [f"Lap {m.lap_no}  ({m.lap_time_display})" for m in laps]
     selected_lap_idx = st.selectbox(
-        "ラップ", range(len(laps)), format_func=lambda i: lap_labels[i], key="lap"
+        tr["sidebar_lap_label"], range(len(laps)), format_func=lambda i: lap_labels[i], key="lap"
     )
     selected_meta = laps[selected_lap_idx]
 
     st.divider()
+    _date_display = (
+        selected_meta.date[:2]
+        + "/"
+        + "".join(["0" + selected_meta.date[2:4], "0" + selected_meta.date[4:6]])
+    )
     st.markdown(
-        f"""
-**セッション詳細**
-- サーキット: `{selected_meta.circuit}`
-- 車両: `{selected_meta.car}`
-- タイヤ: `{selected_meta.tyre}` / `{selected_meta.condition}`
-- 日時: `{selected_meta.date[:2]}/{''.join(['0'+selected_meta.date[2:4],'0'+selected_meta.date[4:6]])}`
-- ラップ数: `{len(laps)}`
-"""
+        tr["sidebar_session_detail"].format(
+            circuit=selected_meta.circuit,
+            car=selected_meta.car,
+            tyre=selected_meta.tyre,
+            condition=selected_meta.condition,
+            date=_date_display,
+            lap_count=len(laps),
+        )
     )
 
     # -----------------------------------------------------------------------
@@ -607,16 +635,22 @@ with st.sidebar:
     st.divider()
     if "_visited" not in st.session_state:
         st.session_state["_visited"] = True
-        if st.secrets.get("ENVIRONMENT") == "cloud":
+        # secrets.toml が存在しないローカル環境では StreamlitSecretNotFoundError が
+        # 発生するため try/except でガードし、クラウド外とみなす
+        try:
+            _is_cloud = st.secrets.get("ENVIRONMENT") == "cloud"
+        except Exception:
+            _is_cloud = False
+        if _is_cloud:
             _increment_counter(_THIS_VERSION)
     counts = _load_counts()
     if counts:
-        st.caption("📊 バージョン別アクセス数")
+        st.caption(tr["sidebar_access_count"])
         for ver, cnt in sorted(counts.items()):
             st.metric(label=ver, value=cnt)
     else:
-        st.caption("📊 バージョン別アクセス数")
-        st.caption("（Supabase 接続後に集計されます）")
+        st.caption(tr["sidebar_access_count"])
+        st.caption(tr["sidebar_access_count_pending"])
 
 df_selected = load_csv(selected_meta.path)
 
@@ -624,10 +658,10 @@ df_selected = load_csv(selected_meta.path)
 # タブ
 # ---------------------------------------------------------------------------
 tab1, tab2, tab3, tab4 = st.tabs([
-    "📊 Tab 1 — HTML 文字列",
-    "📈 Tab 2 — ローカル HTML ファイル",
-    "🗺 Tab 3 — 外部 URL (地図)",
-    "🛠 Tab 4 — st.menu_button",
+    tr["tab1_label"],
+    tr["tab2_label"],
+    tr["tab3_label"],
+    tr["tab4_label"],
 ])
 
 # =====================================================
@@ -637,86 +671,57 @@ with tab1:
     col_main, col_api = st.columns([3, 2], gap="large")
 
     with col_api:
-        st.subheader("st.iframe API ポイント")
-        st.markdown("""
-`st.iframe` に **HTML 文字列** を直接渡すと、
-その場でインライン HTML としてレンダリングされます。
-
-```python
-st.iframe(
-    html_string,     # str — HTML文字列をそのまま渡す
-    height="content" # 'content' でコンテンツ高さに自動調整
-)
-```
-
-| パラメータ | 選択肢 |
-|---|---|
-| `height` | `"content"` / `"stretch"` / `int(px)` |
-| `width` | `"stretch"` / `"content"` / `int(px)` |
-| `tab_index` | `None` / `-1` / `int` |
-
-> `height="content"` を指定すると、  
-> Streamlit 側で HTML の実際の高さを計測して iframe を自動リサイズします。
-""")
+        st.subheader(tr["tab1_subheader_api"])
+        st.markdown(tr["tab1_api_desc"])
 
         st.markdown("---")
-        st.subheader("height パラメータ を試す")
+        st.subheader(tr["tab1_subheader_height"])
+        _height_opts = tr["tab1_height_options"]
         height_mode = st.radio(
             "height",
-            options=["content (自動)", "stretch (縦伸長)", "固定値 (px)"],
+            options=_height_opts,
             index=0,
             key="tab1_height",
         )
-        if height_mode == "固定値 (px)":
-            height_val: int | str = st.slider("高さ (px)", 200, 1000, 600, step=50, key="tab1_px")
-        elif height_mode == "stretch (縦伸長)":
+        if height_mode == tr["tab1_height_fixed"]:
+            height_val: int | str = st.slider(tr["tab1_height_slider"], 200, 1000, 600, step=50, key="tab1_px")
+        elif height_mode == tr["tab1_height_stretch"]:
             height_val = "stretch"
         else:
             height_val = "content"
 
     with col_main:
-        st.subheader(f"ラップ {selected_meta.lap_no} サマリーカード")
-        html_str = build_summary_html(selected_meta, df_selected)
+        st.subheader(tr["tab1_summary_subheader"].format(lap_no=selected_meta.lap_no))
+        html_str = build_summary_html(selected_meta, df_selected, tr)
         st.iframe(html_str, height=height_val)
 
 # =====================================================
 # Tab 2: ローカル HTML ファイルを Path で st.iframe に渡す
 # =====================================================
 with tab2:
-    st.subheader("Plotly テレメトリレポート")
+    st.subheader(tr["tab2_subheader_report"])
 
     col_chart, col_api2 = st.columns([5, 2], gap="large")
 
     with col_api2:
-        st.subheader("st.iframe API ポイント")
-        st.markdown("""
-`st.iframe` に **`Path` オブジェクト** を渡すと、
-Streamlit がファイルを読み込んで自動で埋め込みます。
-
-```python
-from pathlib import Path
-st.iframe(
-    Path("reports/telemetry.html"),
-    height=800,
-)
-```
-
-- `.html` / `.htm` ファイルはコンテンツをそのまま埋め込み
-- PDF / 画像 / SVG などは Streamlit のメディアストレージ経由でブラウザが直接表示
-- ファイルはアプリ実行時に都度差し替え可能（ここではラップ選択変更で再生成）
-""")
+        st.subheader(tr["tab2_subheader_api"])
+        st.markdown(tr["tab2_api_desc"])
 
         st.markdown("---")
-        h_val = st.slider("iframe 高さ (px)", 400, 1200, 870, step=50, key="tab2_height")
+        h_val = st.slider(tr["tab2_height_slider"], 400, 1200, 870, step=50, key="tab2_height")
 
     with col_chart:
         out_html = REPORTS_DIR / "telemetry.html"
-        with st.spinner("テレメトリレポートを生成中..."):
+        with st.spinner(tr["tab2_spinner"]):
             build_telemetry_html(selected_meta, df_selected, out_html)
 
         st.caption(
-            f"生成ファイル: `{out_html}` — "
-            f"ラップ {selected_meta.lap_no} / {selected_meta.circuit} / {selected_meta.car}"
+            tr["tab2_caption"].format(
+                out_html=out_html,
+                lap_no=selected_meta.lap_no,
+                circuit=selected_meta.circuit,
+                car=selected_meta.car,
+            )
         )
         st.iframe(out_html, height=h_val)
 
@@ -733,38 +738,15 @@ _FUJI_MAP_URL = (
 )
 
 with tab3:
-    st.subheader("富士スピードウェイ — OpenStreetMap を埋め込み表示")
-    st.markdown("""
-`st.iframe` に **絶対 URL** を渡すと、そのウェブページを iframe 内に表示します。  
-ここでは、iframe 埋め込みが許可されている **OpenStreetMap** で富士スピードウェイの地図を表示します。
-
-```python
-st.iframe(
-    "https://www.openstreetmap.org/export/embed.html"
-    "?bbox=138.9066%2C35.3659%2C138.9468%2C35.3835"
-    "&layer=mapnik&marker=35.3748%2C138.9267",
-    height=600,
-)
-```
-
-> **ポイント**: 外部 URL の場合、クロスオリジン制限により  
-> `height="content"` は機能せず 400px にフォールバックします。  
-> 高さは整数 `(px)` または `"stretch"` で指定してください。  
->
-> ※ `docs.streamlit.io` などは `X-Frame-Options` で埋め込みをブロックしています。  
-> 埋め込みには iframe 許可済みのサービスを選択してください。
-""")
+    st.subheader(tr["tab3_subheader"])
+    st.markdown(tr["tab3_desc"])
 
     col_left, col_right = st.columns([3, 1], gap="large")
     with col_right:
-        ext_height = st.slider("iframe 高さ (px)", 300, 1000, 600, step=50, key="tab3_height")
+        ext_height = st.slider(tr["tab3_height_slider"], 300, 1000, 600, step=50, key="tab3_height")
         map_layer = st.selectbox(
-            "地図レイヤー",
-            options=[
-                ("標準 (mapnik)", "mapnik"),
-                ("サイクル (cycle)", "cycle"),
-                ("交通 (transport)", "transport"),
-            ],
+            tr["tab3_map_layer_label"],
+            options=[tuple(opt) for opt in tr["tab3_map_options"]],
             format_func=lambda x: x[0],
             key="tab3_layer",
         )
@@ -776,8 +758,7 @@ st.iframe(
             "&marker=35.3748%2C138.9267"
         )
         st.markdown(
-            "[🗺 OpenStreetMap で開く]"
-            "(https://www.openstreetmap.org/?mlat=35.3748&mlon=138.9267#map=14/35.3748/138.9267)",
+            tr["tab3_osm_link"],
             unsafe_allow_html=False,
         )
 
@@ -788,45 +769,13 @@ st.iframe(
 # Tab 4: st.menu_button デモ (ツールバー構築)
 # =====================================================
 with tab4:
-    st.subheader("🛠 ツールバー構築 — st.menu_button デモ")
+    st.subheader(tr["tab4_subheader_toolbar"])
 
     col_main4, col_api4 = st.columns([3, 2], gap="large")
 
     with col_api4:
-        st.subheader("st.menu_button API ポイント")
-        st.markdown(
-            """
-`st.menu_button` は **クリックでドロップダウンを展開** するボタンウィジェット。  
-`st.button` と同様に、選択されたオプションを返し次のリランで `None` にリセットされます。
-
-```python
-action = st.menu_button(
-    label="エクスポート",
-    options=["CSV", "JSON", "HTML"],
-    type="primary",               # "primary" / "secondary" / "tertiary"
-    icon=":material/download:",   # Material アイコン or 絵文字
-    width="content",              # "content" / "stretch" / int(px)
-    format_func=lambda x: x,     # 表示名変換
-    disabled=False,
-    help="ツールチップ",
-)
-if action == "CSV":
-    ...  # 選択時の処理
-```
-
-| パラメータ | 説明 |
-|---|---|
-| `type` | ボタンスタイル (primary/secondary/tertiary) |
-| `icon` | Material アイコン or 絵文字 |
-| `width` | ボタン幅の制御 |
-| `format_func` | オプション表示名の変換 |
-| `disabled` | ボタンを無効化 |
-| `on_click` | 選択時コールバック |
-
-> `st.selectbox` と異なり、ボタンラベルは変わらず  
-> 返り値は次のリランで `None` に戻ります。
-"""
-        )
+        st.subheader(tr["tab4_subheader_api"])
+        st.markdown(tr["tab4_api_desc"])
 
     with col_main4:
         # --- セッション状態初期化 ---
@@ -836,56 +785,49 @@ if action == "CSV":
             st.session_state.mb_stat = "max"
 
         # ---- ツールバー行 ----
-        st.markdown("#### ツールバー")
+        st.markdown(tr["tab4_toolbar_header"])
         tb1, tb2, tb3, tb4_col, tb_space = st.columns([1.3, 1.5, 1.3, 1.0, 3.0])
 
         with tb1:
             export_action = st.menu_button(
-                "エクスポート",
-                options=["CSV 形式", "JSON 形式", "HTML レポート"],
+                tr["tab4_export"],
+                options=tr["tab4_export_options"],
                 type="primary",
                 icon=":material/download:",
-                help="テレメトリデータをエクスポート",
+                help=tr["tab4_export_help"],
                 key="mb_export",
             )
 
         with tb2:
+            _chart_opts_map = tr["tab4_chart_options"]
             chart_action = st.menu_button(
-                "チャート切替",
-                options=["speed", "throttle_brake", "rpm_gear", "tyre_temp"],
-                format_func=lambda x: {
-                    "speed": "📈 スピード",
-                    "throttle_brake": "🎮 スロットル/ブレーキ",
-                    "rpm_gear": "⚙ RPM & ギア",
-                    "tyre_temp": "🌡 タイヤ温度",
-                }[x],
+                tr["tab4_chart_switch"],
+                options=list(_chart_opts_map.keys()),
+                format_func=lambda x: _chart_opts_map[x],
                 icon=":material/bar_chart:",
-                help="表示するチャートを変更",
+                help=tr["tab4_chart_help"],
                 key="mb_chart_btn",
             )
 
         with tb3:
+            _stat_opts_map = tr["tab4_stat_options"]
             stat_action = st.menu_button(
-                "統計ライン",
-                options=["max", "mean", "min"],
-                format_func=lambda x: {
-                    "max": "最大値",
-                    "mean": "平均値",
-                    "min": "最小値",
-                }[x],
+                tr["tab4_stat_line"],
+                options=list(_stat_opts_map.keys()),
+                format_func=lambda x: _stat_opts_map[x],
                 icon=":material/analytics:",
-                help="統計ラインの種類を変更",
+                help=tr["tab4_stat_help"],
                 key="mb_stat_btn",
             )
 
         with tb4_col:
             st.menu_button(
-                "詳細",
-                options=["比較モード", "オーバーレイ", "ラップ差分"],
+                tr["tab4_detail"],
+                options=tr["tab4_detail_options"],
                 icon=":material/more_horiz:",
                 type="tertiary",
                 disabled=True,
-                help="近日公開予定",
+                help=tr["tab4_detail_help"],
                 key="mb_more",
             )
 
@@ -895,65 +837,69 @@ if action == "CSV":
         if stat_action:
             st.session_state.mb_stat = stat_action
 
-        if export_action == "CSV 形式":
+        _export_opts = tr["tab4_export_options"]
+        if export_action == _export_opts[0]:
             csv_bytes = df_selected.to_csv(index=False).encode("utf-8")
             st.download_button(
-                "⬇ CSV をダウンロード",
+                tr["tab4_download_csv"],
                 data=csv_bytes,
                 file_name=f"telemetry_{selected_meta.circuit}_lap{selected_meta.lap_no}.csv",
                 mime="text/csv",
                 key="dl_csv4",
             )
-        elif export_action == "JSON 形式":
+        elif export_action == _export_opts[1]:
             json_bytes = df_selected.to_json(
                 orient="records", force_ascii=False
             ).encode("utf-8")
             st.download_button(
-                "⬇ JSON をダウンロード",
+                tr["tab4_download_json"],
                 data=json_bytes,
                 file_name=f"telemetry_{selected_meta.circuit}_lap{selected_meta.lap_no}.json",
                 mime="application/json",
                 key="dl_json4",
             )
-        elif export_action == "HTML レポート":
+        elif export_action == _export_opts[2]:
             out_html4 = REPORTS_DIR / "telemetry_menu.html"
-            with st.spinner("HTML レポートを生成中..."):
+            with st.spinner(tr["tab4_spinner_html"]):
                 build_telemetry_html(selected_meta, df_selected, out_html4)
-            st.success(f"HTML レポートを生成しました: `{out_html4}`")
+            st.success(tr["tab4_success_html"].format(out_html=out_html4))
 
         st.divider()
 
         # ---- チャート表示 ----
+        _chart_titles_map = tr["tab4_chart_titles"]
         _chart_meta: dict[str, tuple[str, list[str], list[str]]] = {
             "speed": (
-                "スピード (km/h)",
+                _chart_titles_map["speed"],
                 ["speed_kmh"],
                 ["#58a6ff"],
             ),
             "throttle_brake": (
-                "スロットル / ブレーキ (%)",
+                _chart_titles_map["throttle_brake"],
                 ["throttle_pct", "brake_pct"],
                 ["#56d364", "#f85149"],
             ),
             "rpm_gear": (
-                "RPM",
+                _chart_titles_map["rpm_gear"],
                 ["engine_rpm"],
                 ["#d2a8ff"],
             ),
             "tyre_temp": (
-                "タイヤ温度 (°C)",
+                _chart_titles_map["tyre_temp"],
                 ["tyre_temp_fl", "tyre_temp_fr", "tyre_temp_rl", "tyre_temp_rr"],
                 ["#79c0ff", "#56d364", "#ffa657", "#f85149"],
             ),
         }
-        _stat_labels = {"max": "最大値", "mean": "平均値", "min": "最小値"}
+        _stat_labels = tr["tab4_stat_options"]
 
         cur_chart = st.session_state.mb_chart
         cur_stat = st.session_state.mb_stat
         chart_title4, chart_cols4, chart_colors4 = _chart_meta[cur_chart]
 
         st.caption(
-            f"表示中: **{chart_title4}**  |  統計ライン: **{_stat_labels[cur_stat]}**"
+            tr["tab4_chart_caption"].format(
+                chart_title=chart_title4, stat_label=_stat_labels[cur_stat]
+            )
         )
 
         t_axis = (
@@ -985,7 +931,9 @@ if action == "CSV":
                 line_dash="dash",
                 line_color=color,
                 opacity=0.6,
-                annotation_text=f"{_stat_labels[cur_stat]}: {stat_val:.1f}",
+                annotation_text=tr["tab4_stat_annotation"].format(
+                    stat_label=_stat_labels[cur_stat], stat_val=f"{stat_val:.1f}"
+                ),
                 annotation_position="top right",
                 annotation_font_color=color,
             )
@@ -1013,16 +961,16 @@ if action == "CSV":
 
         # ---- type パラメータ比較デモ ----
         st.divider()
-        st.markdown("#### `type` パラメータ比較")
+        st.markdown(tr["tab4_type_comparison"])
         tc1, tc2, tc3 = st.columns(3)
         for col_t, type_val in zip([tc1, tc2, tc3], ["primary", "secondary", "tertiary"]):
             with col_t:
                 res = st.menu_button(
                     type_val,
-                    options=["項目 A", "項目 B", "項目 C"],
+                    options=tr["tab4_item_options"],
                     type=type_val,  # type: ignore[arg-type]
                     width="stretch",
                     key=f"type_demo_{type_val}",
                 )
                 if res:
-                    st.caption(f"選択: **{res}**")
+                    st.caption(tr["tab4_selection_caption"].format(res=res))
