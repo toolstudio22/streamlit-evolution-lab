@@ -31,7 +31,9 @@ def _get_supabase():
         url = st.secrets["SUPABASE_URL"]
         key = st.secrets["SUPABASE_PUBLISHABLE_KEY"]
         return create_client(url, key)
-    except Exception:
+    except Exception as e:
+        import sys
+        print(f"[_get_supabase] ERROR: {type(e).__name__}: {e}", file=sys.stderr)
         return None
 
 
@@ -51,17 +53,29 @@ def _load_access_logs(days: int) -> pd.DataFrame:
 
     try:
         since = (date.today() - timedelta(days=days - 1)).isoformat()
-        res = (
-            client.table("access_logs")
-            .select("version, accessed_at")
-            .gte("accessed_at", since)
-            .order("accessed_at")
-            .execute()
-        )
-        if not res.data:
+        batch_size = 1000
+        offset = 0
+        all_rows: list[dict] = []
+        while True:
+            res = (
+                client.table("access_logs")
+                .select("version, accessed_at")
+                .gte("accessed_at", since)
+                .order("accessed_at")
+                .range(offset, offset + batch_size - 1)
+                .execute()
+            )
+            if not res.data:
+                break
+            all_rows.extend(res.data)
+            if len(res.data) < batch_size:
+                break
+            offset += batch_size
+
+        if not all_rows:
             return pd.DataFrame(columns=["date", "version"])
 
-        df = pd.DataFrame(res.data)
+        df = pd.DataFrame(all_rows)
         df["accessed_at"] = pd.to_datetime(df["accessed_at"], utc=True).dt.tz_convert("Asia/Tokyo")
         df["date"] = df["accessed_at"].dt.date
         # tz_localize(None) でタイムゾーン情報を除去（st.bar_chart / st.line_chart が tz-naive を要求するため）
@@ -189,7 +203,7 @@ _line_fig.update_layout(
     height=320,
     margin=dict(l=0, r=0, t=20, b=0),
 )
-st.plotly_chart(_line_fig, use_container_width=True)
+st.plotly_chart(_line_fig, width='stretch')
 
 st.divider()
 
@@ -214,7 +228,7 @@ _fig.update_layout(
     height=350,
     margin=dict(l=0, r=0, t=20, b=0),
 )
-st.plotly_chart(_fig, use_container_width=True)
+st.plotly_chart(_fig, width='stretch')
 
 st.divider()
 
@@ -232,4 +246,4 @@ with st.expander("日次データを表示"):
     if len(versions) > 1:
         display_df["合計"] = display_df[versions].sum(axis=1)
 
-    st.dataframe(display_df, use_container_width=True, hide_index=True)
+    st.dataframe(display_df, width='stretch', hide_index=True)
