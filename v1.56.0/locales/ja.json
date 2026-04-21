@@ -104,7 +104,7 @@
   "card_brake": "ブレーキ",
   "card_tire_temp": "タイヤ温度 平均 (°C)",
 
-  "tab5_label": "📋 Tab 5 — st.dataframe 新機能",
+  "tab5_label": "📋 Tab 5 — st.dataframe",
   "tab5_subheader_df": "ラップ一覧テーブル — selection / alignment デモ",
   "tab5_subheader_api": "st.dataframe API ポイント",
   "tab5_api_desc": "`st.dataframe` に追加された 3 つの主要機能を実演します。\n\n```python\nevent = st.dataframe(\n    df,\n    on_select=\"rerun\",\n    # ① 常に 1 行が選択された状態を保つ\n    selection_mode=\"single-row-required\",\n    # ② 初期選択行をプログラムで指定 (0-based index)\n    selection_default={\"selection\": {\"rows\": [0], \"columns\": [], \"cells\": []}},\n    column_config={\n        \"col_a\": st.column_config.NumberColumn(\n            # ③ 列ごとに文字揃えを制御\n            alignment=\"right\",  # \"left\" / \"center\" / \"right\"\n        ),\n    },\n    hide_index=True,\n)\n# 選択行インデックスを取得\nrows = event.selection.rows  # [0]\n```\n\n| パラメータ | 内容 |\n|---|---|\n| `selection_mode` | `\"single-row-required\"` で常に 1 行を選択状態に保持 |\n| `selection_default` | `{\"selection\": {\"rows\": [N], ...}}` で初期選択行をプログラムで指定 |\n| `alignment` | `\"left\"` / `\"center\"` / `\"right\"` で列内テキスト揃えを制御 |\n\n> **ポイント**: サイドバーで選択中のラップ番号が  \n> テーブルの初期選択行と連動しています。  \n> `\"single-row-required\"` により行クリックで  \n> 選択が切り替わり、チャートが更新されます。",
