@@ -1046,3 +1046,22 @@ def show() -> None:
                 ),
             )
             st.plotly_chart(_fig5, use_container_width=True)
+
+
+# ---------------------------------------------------------------------------
+# スタンドアロン起動サポート
+# `streamlit run v1.56.0/app.py` で直接実行された場合のみ動作する。
+# importlib 経由でロードされる場合は __spec__ が設定されるためスキップ。
+# ---------------------------------------------------------------------------
+if __spec__ is None:  # type: ignore[name-defined]
+    st.set_page_config(
+        page_title="Racing Simulator Telemetry Analysis",
+        page_icon="🏎",
+        layout="wide",
+    )
+    st.sidebar.selectbox(
+        "🌐 言語 / Language",
+        ["日本語", "English"],
+        key="lang_selector",
+    )
+    show()
