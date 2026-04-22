@@ -19,6 +19,7 @@ st.menu_button の使い方:
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import re
 from collections import Counter
@@ -1059,9 +1060,51 @@ if __spec__ is None:  # type: ignore[name-defined]
         page_icon="🏎",
         layout="wide",
     )
+
+    # --- 言語選択 ---
     st.sidebar.selectbox(
         "🌐 言語 / Language",
         ["日本語", "English"],
         key="lang_selector",
     )
-    show()
+    st.sidebar.divider()
+
+    # --- バージョン選択 (root app.py と同じロジックを再現) ---
+    _root = Path(__file__).parent.parent
+
+    def _scan_versions() -> list[str]:
+        _versions: list[tuple[int, int, int, str]] = []
+        for _folder in _root.iterdir():
+            if not _folder.is_dir():
+                continue
+            _m = re.match(r"^v(\d+)\.(\d+)\.(\d+)$", _folder.name)
+            if _m and (_folder / "app.py").exists():
+                _versions.append((int(_m.group(1)), int(_m.group(2)), int(_m.group(3)), _folder.name))
+        _versions.sort(reverse=True)
+        return [v[3] for v in _versions]
+
+    _available_versions = _scan_versions()
+    st.sidebar.selectbox(
+        "🔖 Streamlit Version",
+        _available_versions,
+        index=_available_versions.index(_THIS_VERSION) if _THIS_VERSION in _available_versions else 0,
+        key="version_selector",
+        help="デモを確認したい Streamlit バージョンを選択してください。",
+    )
+    st.sidebar.divider()
+
+    _selected = st.session_state["version_selector"]
+    if _selected == _THIS_VERSION:
+        show()
+    else:
+        _spec = importlib.util.spec_from_file_location(
+            f"app_{_selected.replace('.', '_')}",
+            _root / _selected / "app.py",
+        )
+        if _spec and _spec.loader:
+            _mod = importlib.util.module_from_spec(_spec)
+            import sys as _sys
+            _sys.modules[_spec.name] = _mod
+            _spec.loader.exec_module(_mod)  # type: ignore[union-attr]
+            if hasattr(_mod, "show"):
+                _mod.show()
