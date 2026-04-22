@@ -19,10 +19,8 @@ st.menu_button の使い方:
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import re
-import sys
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -90,27 +88,6 @@ def load_translations(lang: str) -> dict:
     locale_path = Path(__file__).parent / "locales" / f"{lang}.json"
     with locale_path.open(encoding="utf-8") as f:
         return json.load(f)
-
-
-# ---------------------------------------------------------------------------
-# バージョン発見ヘルパー
-# ---------------------------------------------------------------------------
-def scan_versions() -> list[str]:
-    """ワークスペースルート配下の v*.*.* フォルダを自動検出してバージョンリストを返す。
-
-    各バージョンの app.py が show() 関数を公開していれば、
-    そのバージョンのデモをこのエントリーポイントから呼び出せる。
-    """
-    root = Path(__file__).parent.parent
-    versions: list[tuple[int, int, int, str]] = []
-    for folder in root.iterdir():
-        if not folder.is_dir():
-            continue
-        m = re.match(r"^v(\d+)\.(\d+)\.(\d+)$", folder.name)
-        if m and (folder / "app.py").exists():
-            versions.append((int(m.group(1)), int(m.group(2)), int(m.group(3)), folder.name))
-    versions.sort()
-    return [v[3] for v in versions]
 
 
 # ---------------------------------------------------------------------------
@@ -511,607 +488,561 @@ def build_telemetry_html(meta: LapMeta, df: pd.DataFrame, out_path: Path) -> Non
     )
 
 
-# ---------------------------------------------------------------------------
-# Streamlit アプリ本体
-# ---------------------------------------------------------------------------
-st.set_page_config(
-    page_title="Racing Simulator Telemetry Analysis",
-    page_icon="🏎",
-    layout="wide",
-)
 
 # ---------------------------------------------------------------------------
-# 言語選択: サイドバー最上部
-# 選択された言語コードで locales/{lang}.json を読み込み、以降の UI 文字列は
-# すべて tr["キー"] 経由で参照する
+# show(): バージョン v1.56.0 のコンテンツを描画する
+# root app.py から importlib 経由で呼び出される。
 # ---------------------------------------------------------------------------
-_lang_options = ["日本語", "English"]
-_lang_codes = {"日本語": "ja", "English": "en"}
-_lang_display = st.sidebar.selectbox(
-    "🌐 言語 / Language",
-    _lang_options,
-    key="lang_selector",
-)
-_lang_code = _lang_codes[_lang_display]
-tr = load_translations(_lang_code)
-st.sidebar.divider()
+def show() -> None:
+    # 言語設定を root app.py の lang_selector (session_state) から読み取る
+    _lang_codes = {"日本語": "ja", "English": "en"}
+    _lang_display = st.session_state.get("lang_selector", "日本語")
+    if _lang_display not in _lang_codes:
+        _lang_display = "日本語"
+    tr = load_translations(_lang_codes[_lang_display])
 
-st.title(tr["app_title"])
-st.caption(tr["app_caption"])
-
-# ---------------------------------------------------------------------------
-# バージョン選択: サイドバー最上部
-# ---------------------------------------------------------------------------
-_available_versions = scan_versions()
-_default_idx = _available_versions.index(_THIS_VERSION) if _THIS_VERSION in _available_versions else 0
-_selected_version: str = st.sidebar.selectbox(
-    tr["sidebar_version_label"],
-    _available_versions,
-    index=_default_idx,
-    key="version_selector",
-    help=tr["sidebar_version_help"],
-)
-st.sidebar.divider()
-
-# 別バージョンが選択された場合はそちらの app.py の show() を呼び出して終了
-if _selected_version != _THIS_VERSION:
-    _target_app = Path(__file__).parent.parent / _selected_version / "app.py"
-    _spec = importlib.util.spec_from_file_location(
-        f"app_{_selected_version.replace('.', '_')}", _target_app
-    )
-    if _spec is None or _spec.loader is None:
-        st.error(tr["error_load_app"].format(version=_selected_version))
-        st.stop()
-    _mod = importlib.util.module_from_spec(_spec)
-    sys.modules[_spec.name] = _mod
-    _spec.loader.exec_module(_mod)  # type: ignore[union-attr]
-    if not hasattr(_mod, "show"):
-        st.error(tr["error_no_show_fn"].format(version=_selected_version))
-        st.stop()
-    _mod.show()
-    st.stop()
-
-# ---------------------------------------------------------------------------
-# サイドバー: 共通選択UI
-# ---------------------------------------------------------------------------
-with st.sidebar:
-    st.header(tr["sidebar_data_header"])
-
-    # --- データフォルダ選択 ---
-    data_dir_input = st.text_input(
-        tr["sidebar_data_folder_label"],
-        value=str(_DEFAULT_DATA_DIR),
-        help=tr["sidebar_data_folder_help"],
-        key="data_dir",
-    )
-    data_dir = Path(data_dir_input)
-    if not data_dir.is_dir():
-        st.error(tr["sidebar_folder_not_found"].format(data_dir=data_dir))
-        st.stop()
+    st.title(tr["app_title"])
+    st.caption(tr["app_caption"])
 
     # ---------------------------------------------------------------------------
-    # データ読み込み・セッショングルーピング
+    # サイドバー: 共通選択UI
     # ---------------------------------------------------------------------------
-    all_metas = load_all_meta(data_dir)
-    sessions = group_sessions(all_metas)
-    session_keys = list(sessions.keys())
+    with st.sidebar:
+        st.header(tr["sidebar_data_header"])
 
-    selected_session = st.selectbox(
-        tr["sidebar_session_label"], session_keys, key="session", filter_mode="fuzzy"
-    )
-    # セッション状態に古いキーが残存している場合、sessions に存在しない値が
-    # selectbox から返ることがある (KeyError の原因)。先頭キーへフォールバック。
-    if selected_session not in sessions:
-        selected_session = session_keys[0] if session_keys else None
-    if selected_session is None:
-        st.error(tr["sidebar_no_session"])
-        st.stop()
-    laps = sessions[selected_session]
-    lap_labels = [f"Lap {m.lap_no}  ({m.lap_time_display})" for m in laps]
-    selected_lap_idx = st.selectbox(
-        tr["sidebar_lap_label"],
-        range(len(laps)),
-        format_func=lambda i: lap_labels[i],
-        key="lap",
-        filter_mode="fuzzy",
-    )
-    selected_meta = laps[selected_lap_idx]
-
-    st.divider()
-    _date_display = (
-        selected_meta.date[:2]
-        + "/"
-        + "".join(["0" + selected_meta.date[2:4], "0" + selected_meta.date[4:6]])
-    )
-    st.markdown(
-        tr["sidebar_session_detail"].format(
-            circuit=selected_meta.circuit,
-            car=selected_meta.car,
-            tyre=selected_meta.tyre,
-            condition=selected_meta.condition,
-            date=_date_display,
-            lap_count=len(laps),
+        # --- データフォルダ選択 ---
+        data_dir_input = st.text_input(
+            tr["sidebar_data_folder_label"],
+            value=str(_DEFAULT_DATA_DIR),
+            help=tr["sidebar_data_folder_help"],
+            key="data_dir",
         )
-    )
+        data_dir = Path(data_dir_input)
+        if not data_dir.is_dir():
+            st.error(tr["sidebar_folder_not_found"].format(data_dir=data_dir))
+            st.stop()
 
-    # -----------------------------------------------------------------------
-    # アクセスカウンター（セッション先頭で 1 回 Supabase に記録）
-    # -----------------------------------------------------------------------
-    st.divider()
-    if "_visited" not in st.session_state:
-        st.session_state["_visited"] = True
-        # secrets.toml が存在しないローカル環境では StreamlitSecretNotFoundError が
-        # 発生するため try/except でガードし、クラウド外とみなす
-        try:
-            _is_cloud = st.secrets.get("ENVIRONMENT") == "cloud"
-        except Exception:
-            _is_cloud = False
-        if _is_cloud:
-            _increment_counter(_THIS_VERSION)
-    counts = _load_counts()
-    if counts:
-        st.caption(tr["sidebar_access_count"])
-        for ver, cnt in sorted(counts.items()):
-            st.metric(label=ver, value=cnt)
-    else:
-        st.caption(tr["sidebar_access_count"])
-        st.caption(tr["sidebar_access_count_pending"])
+        # ---------------------------------------------------------------------------
+        # データ読み込み・セッショングルーピング
+        # ---------------------------------------------------------------------------
+        all_metas = load_all_meta(data_dir)
+        sessions = group_sessions(all_metas)
+        session_keys = list(sessions.keys())
 
-df_selected = load_csv(selected_meta.path)
-
-# ---------------------------------------------------------------------------
-# タブ
-# ---------------------------------------------------------------------------
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    tr["tab1_label"],
-    tr["tab2_label"],
-    tr["tab3_label"],
-    tr["tab4_label"],
-    tr["tab5_label"],
-])
-
-# =====================================================
-# Tab 1: HTML 文字列を st.iframe に渡す
-# =====================================================
-with tab1:
-    col_main, col_api = st.columns([3, 2], gap="large")
-
-    with col_api:
-        st.subheader(tr["tab1_subheader_api"])
-        st.markdown(tr["tab1_api_desc"])
-
-        st.markdown("---")
-        st.subheader(tr["tab1_subheader_height"])
-        _height_opts = tr["tab1_height_options"]
-        height_mode = st.radio(
-            "height",
-            options=_height_opts,
-            index=0,
-            key="tab1_height",
+        selected_session = st.selectbox(
+            tr["sidebar_session_label"], session_keys, key="session", filter_mode="fuzzy"
         )
-        if height_mode == tr["tab1_height_fixed"]:
-            height_val: int | str = st.slider(tr["tab1_height_slider"], 200, 1000, 600, step=50, key="tab1_px")
-        elif height_mode == tr["tab1_height_stretch"]:
-            height_val = "stretch"
-        else:
-            height_val = "content"
-
-    with col_main:
-        st.subheader(tr["tab1_summary_subheader"].format(lap_no=selected_meta.lap_no))
-        html_str = build_summary_html(selected_meta, df_selected, tr)
-        st.iframe(html_str, height=height_val)
-
-# =====================================================
-# Tab 2: ローカル HTML ファイルを Path で st.iframe に渡す
-# =====================================================
-with tab2:
-    st.subheader(tr["tab2_subheader_report"])
-
-    col_chart, col_api2 = st.columns([5, 2], gap="large")
-
-    with col_api2:
-        st.subheader(tr["tab2_subheader_api"])
-        st.markdown(tr["tab2_api_desc"])
-
-        st.markdown("---")
-        h_val = st.slider(tr["tab2_height_slider"], 400, 1200, 870, step=50, key="tab2_height")
-
-    with col_chart:
-        out_html = REPORTS_DIR / "telemetry.html"
-        with st.spinner(tr["tab2_spinner"]):
-            build_telemetry_html(selected_meta, df_selected, out_html)
-
-        st.caption(
-            tr["tab2_caption"].format(
-                out_html=out_html,
-                lap_no=selected_meta.lap_no,
-                circuit=selected_meta.circuit,
-                car=selected_meta.car,
-            )
+        # セッション状態に古いキーが残存している場合、sessions に存在しない値が
+        # selectbox から返ることがある (KeyError の原因)。先頭キーへフォールバック。
+        if selected_session not in sessions:
+            selected_session = session_keys[0] if session_keys else None
+        if selected_session is None:
+            st.error(tr["sidebar_no_session"])
+            st.stop()
+        laps = sessions[selected_session]
+        lap_labels = [f"Lap {m.lap_no}  ({m.lap_time_display})" for m in laps]
+        selected_lap_idx = st.selectbox(
+            tr["sidebar_lap_label"],
+            range(len(laps)),
+            format_func=lambda i: lap_labels[i],
+            key="lap",
+            filter_mode="fuzzy",
         )
-        st.iframe(out_html, height=h_val)
+        selected_meta = laps[selected_lap_idx]
 
-# =====================================================
-# Tab 3: 外部 URL を st.iframe に渡す
-# =====================================================
-
-# 富士スピードウェイ周辺の OpenStreetMap embed URL
-_FUJI_MAP_URL = (
-    "https://www.openstreetmap.org/export/embed.html"
-    "?bbox=138.9066%2C35.3659%2C138.9468%2C35.3835"
-    "&layer=mapnik"
-    "&marker=35.3748%2C138.9267"
-)
-
-with tab3:
-    st.subheader(tr["tab3_subheader"])
-    st.markdown(tr["tab3_desc"])
-
-    col_left, col_right = st.columns([3, 1], gap="large")
-    with col_right:
-        ext_height = st.slider(tr["tab3_height_slider"], 300, 1000, 600, step=50, key="tab3_height")
-        map_layer = st.selectbox(
-            tr["tab3_map_layer_label"],
-            options=[tuple(opt) for opt in tr["tab3_map_options"]],
-            format_func=lambda x: x[0],
-            key="tab3_layer",
-        )
-        layer_param = map_layer[1]
-        map_url = (
-            "https://www.openstreetmap.org/export/embed.html"
-            "?bbox=138.9066%2C35.3659%2C138.9468%2C35.3835"
-            f"&layer={layer_param}"
-            "&marker=35.3748%2C138.9267"
+        st.divider()
+        _date_display = (
+            f"{selected_meta.date[:2]}/{selected_meta.date[2:4]}/{selected_meta.date[4:6]}"
         )
         st.markdown(
-            tr["tab3_osm_link"],
-            unsafe_allow_html=False,
+            tr["sidebar_session_detail"].format(
+                circuit=selected_meta.circuit,
+                car=selected_meta.car,
+                tyre=selected_meta.tyre,
+                condition=selected_meta.condition,
+                date=_date_display,
+                lap_count=len(laps),
+            )
         )
 
-    with col_left:
-        st.iframe(map_url, height=ext_height)
-
-# =====================================================
-# Tab 4: st.menu_button デモ (ツールバー構築)
-# =====================================================
-with tab4:
-    st.subheader(tr["tab4_subheader_toolbar"])
-
-    col_main4, col_api4 = st.columns([3, 2], gap="large")
-
-    with col_api4:
-        st.subheader(tr["tab4_subheader_api"])
-        st.markdown(tr["tab4_api_desc"])
-
-    with col_main4:
-        # --- セッション状態初期化 ---
-        if "mb_chart" not in st.session_state:
-            st.session_state.mb_chart = "speed"
-        if "mb_stat" not in st.session_state:
-            st.session_state.mb_stat = "max"
-
-        # ---- ツールバー行 ----
-        st.markdown(tr["tab4_toolbar_header"])
-        tb1, tb2, tb3, tb4_col, tb_space = st.columns([1.3, 1.5, 1.3, 1.0, 3.0])
-
-        with tb1:
-            export_action = st.menu_button(
-                tr["tab4_export"],
-                options=tr["tab4_export_options"],
-                type="primary",
-                icon=":material/download:",
-                help=tr["tab4_export_help"],
-                key="mb_export",
-            )
-
-        with tb2:
-            _chart_opts_map = tr["tab4_chart_options"]
-            chart_action = st.menu_button(
-                tr["tab4_chart_switch"],
-                options=list(_chart_opts_map.keys()),
-                format_func=lambda x: _chart_opts_map[x],
-                icon=":material/bar_chart:",
-                help=tr["tab4_chart_help"],
-                key="mb_chart_btn",
-            )
-
-        with tb3:
-            _stat_opts_map = tr["tab4_stat_options"]
-            stat_action = st.menu_button(
-                tr["tab4_stat_line"],
-                options=list(_stat_opts_map.keys()),
-                format_func=lambda x: _stat_opts_map[x],
-                icon=":material/analytics:",
-                help=tr["tab4_stat_help"],
-                key="mb_stat_btn",
-            )
-
-        with tb4_col:
-            st.menu_button(
-                tr["tab4_detail"],
-                options=tr["tab4_detail_options"],
-                icon=":material/more_horiz:",
-                type="tertiary",
-                disabled=True,
-                help=tr["tab4_detail_help"],
-                key="mb_more",
-            )
-
-        # ---- アクション処理 ----
-        if chart_action:
-            st.session_state.mb_chart = chart_action
-        if stat_action:
-            st.session_state.mb_stat = stat_action
-
-        _export_opts = tr["tab4_export_options"]
-        if export_action == _export_opts[0]:
-            csv_bytes = df_selected.to_csv(index=False).encode("utf-8")
-            st.download_button(
-                tr["tab4_download_csv"],
-                data=csv_bytes,
-                file_name=f"telemetry_{selected_meta.circuit}_lap{selected_meta.lap_no}.csv",
-                mime="text/csv",
-                key="dl_csv4",
-            )
-        elif export_action == _export_opts[1]:
-            json_bytes = df_selected.to_json(
-                orient="records", force_ascii=False
-            ).encode("utf-8")
-            st.download_button(
-                tr["tab4_download_json"],
-                data=json_bytes,
-                file_name=f"telemetry_{selected_meta.circuit}_lap{selected_meta.lap_no}.json",
-                mime="application/json",
-                key="dl_json4",
-            )
-        elif export_action == _export_opts[2]:
-            out_html4 = REPORTS_DIR / "telemetry_menu.html"
-            with st.spinner(tr["tab4_spinner_html"]):
-                build_telemetry_html(selected_meta, df_selected, out_html4)
-            st.success(tr["tab4_success_html"].format(out_html=out_html4))
-
+        # -----------------------------------------------------------------------
+        # アクセスカウンター（セッション先頭で 1 回 Supabase に記録）
+        # -----------------------------------------------------------------------
         st.divider()
+        if "_visited" not in st.session_state:
+            st.session_state["_visited"] = True
+            # secrets.toml が存在しないローカル環境では StreamlitSecretNotFoundError が
+            # 発生するため try/except でガードし、クラウド外とみなす
+            try:
+                _is_cloud = st.secrets.get("ENVIRONMENT") == "cloud"
+            except Exception:
+                _is_cloud = False
+            if _is_cloud:
+                _increment_counter(_THIS_VERSION)
+        counts = _load_counts()
+        if counts:
+            st.caption(tr["sidebar_access_count"])
+            for ver, cnt in sorted(counts.items()):
+                st.metric(label=ver, value=cnt)
+        else:
+            st.caption(tr["sidebar_access_count"])
+            st.caption(tr["sidebar_access_count_pending"])
 
-        # ---- チャート表示 ----
-        _chart_titles_map = tr["tab4_chart_titles"]
-        _chart_meta: dict[str, tuple[str, list[str], list[str]]] = {
-            "speed": (
-                _chart_titles_map["speed"],
-                ["speed_kmh"],
-                ["#58a6ff"],
-            ),
-            "throttle_brake": (
-                _chart_titles_map["throttle_brake"],
-                ["throttle_pct", "brake_pct"],
-                ["#56d364", "#f85149"],
-            ),
-            "rpm_gear": (
-                _chart_titles_map["rpm_gear"],
-                ["engine_rpm"],
-                ["#d2a8ff"],
-            ),
-            "tyre_temp": (
-                _chart_titles_map["tyre_temp"],
-                ["tyre_temp_fl", "tyre_temp_fr", "tyre_temp_rl", "tyre_temp_rr"],
-                ["#79c0ff", "#56d364", "#ffa657", "#f85149"],
-            ),
-        }
-        _stat_labels = tr["tab4_stat_options"]
+    df_selected = load_csv(selected_meta.path)
 
-        cur_chart = st.session_state.mb_chart
-        cur_stat = st.session_state.mb_stat
-        chart_title4, chart_cols4, chart_colors4 = _chart_meta[cur_chart]
+    # ---------------------------------------------------------------------------
+    # タブ
+    # ---------------------------------------------------------------------------
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        tr["tab1_label"],
+        tr["tab2_label"],
+        tr["tab3_label"],
+        tr["tab4_label"],
+        tr["tab5_label"],
+    ])
 
-        st.caption(
-            tr["tab4_chart_caption"].format(
-                chart_title=chart_title4, stat_label=_stat_labels[cur_stat]
+    # =====================================================
+    # Tab 1: HTML 文字列を st.iframe に渡す
+    # =====================================================
+    with tab1:
+        col_main, col_api = st.columns([3, 2], gap="large")
+
+        with col_api:
+            st.subheader(tr["tab1_subheader_api"])
+            st.markdown(tr["tab1_api_desc"])
+
+            st.markdown("---")
+            st.subheader(tr["tab1_subheader_height"])
+            _height_opts = tr["tab1_height_options"]
+            height_mode = st.radio(
+                "height",
+                options=_height_opts,
+                index=0,
+                key="tab1_height",
             )
-        )
-
-        t_axis = (
-            df_selected.index / len(df_selected) * selected_meta.lap_time_ms / 1000
-        )
-        fig4 = go.Figure()
-
-        for col_name, color in zip(chart_cols4, chart_colors4):
-            r, g, b = int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
-            fig4.add_trace(
-                go.Scatter(
-                    x=t_axis,
-                    y=df_selected[col_name],
-                    name=col_name,
-                    line=dict(color=color, width=1.5),
-                    fill="tozeroy",
-                    fillcolor=f"rgba({r},{g},{b},0.10)",
-                )
-            )
-            if cur_stat == "max":
-                stat_val = float(df_selected[col_name].max())
-            elif cur_stat == "mean":
-                stat_val = float(df_selected[col_name].mean())
+            if height_mode == tr["tab1_height_fixed"]:
+                height_val: int | str = st.slider(tr["tab1_height_slider"], 200, 1000, 600, step=50, key="tab1_px")
+            elif height_mode == tr["tab1_height_stretch"]:
+                height_val = "stretch"
             else:
-                stat_val = float(df_selected[col_name].min())
+                height_val = "content"
 
-            fig4.add_hline(
-                y=stat_val,
-                line_dash="dash",
-                line_color=color,
-                opacity=0.6,
-                annotation_text=tr["tab4_stat_annotation"].format(
-                    stat_label=_stat_labels[cur_stat], stat_val=f"{stat_val:.1f}"
-                ),
-                annotation_position="top right",
-                annotation_font_color=color,
-            )
+        with col_main:
+            st.subheader(tr["tab1_summary_subheader"].format(lap_no=selected_meta.lap_no))
+            html_str = build_summary_html(selected_meta, df_selected, tr)
+            st.iframe(html_str, height=height_val)
 
-        fig4.update_layout(
-            paper_bgcolor="#0d1117",
-            plot_bgcolor="#161b22",
-            font=dict(color="#8b949e"),
-            xaxis=dict(
-                title="Time (s)", gridcolor="#21262d", zerolinecolor="#30363d"
-            ),
-            yaxis=dict(
-                title=chart_title4, gridcolor="#21262d", zerolinecolor="#30363d"
-            ),
-            height=420,
-            margin=dict(l=60, r=20, t=20, b=60),
-            legend=dict(
-                orientation="h",
-                y=-0.18,
-                bgcolor="rgba(0,0,0,0)",
-                font=dict(color="#c9d1d9"),
-            ),
-        )
-        st.plotly_chart(fig4, use_container_width=True)
+    # =====================================================
+    # Tab 2: ローカル HTML ファイルを Path で st.iframe に渡す
+    # =====================================================
+    with tab2:
+        st.subheader(tr["tab2_subheader_report"])
 
-        # ---- type パラメータ比較デモ ----
-        st.divider()
-        st.markdown(tr["tab4_type_comparison"])
-        tc1, tc2, tc3 = st.columns(3)
-        for col_t, type_val in zip([tc1, tc2, tc3], ["primary", "secondary", "tertiary"]):
-            with col_t:
-                res = st.menu_button(
-                    type_val,
-                    options=tr["tab4_item_options"],
-                    type=type_val,  # type: ignore[arg-type]
-                    width="stretch",
-                    key=f"type_demo_{type_val}",
+        col_chart, col_api2 = st.columns([5, 2], gap="large")
+
+        with col_api2:
+            st.subheader(tr["tab2_subheader_api"])
+            st.markdown(tr["tab2_api_desc"])
+
+            st.markdown("---")
+            h_val = st.slider(tr["tab2_height_slider"], 400, 1200, 870, step=50, key="tab2_height")
+
+        with col_chart:
+            out_html = REPORTS_DIR / "telemetry.html"
+            with st.spinner(tr["tab2_spinner"]):
+                build_telemetry_html(selected_meta, df_selected, out_html)
+
+            st.caption(
+                tr["tab2_caption"].format(
+                    out_html=out_html,
+                    lap_no=selected_meta.lap_no,
+                    circuit=selected_meta.circuit,
+                    car=selected_meta.car,
                 )
-                if res:
-                    st.caption(tr["tab4_selection_caption"].format(res=res))
-
-# =====================================================
-# Tab 5: st.dataframe 新機能
-#   - selection_mode="single-row-required"
-#   - selection={"rows": [N]}  (初期選択行をプログラム指定)
-#   - column_config の alignment パラメータ
-# =====================================================
-with tab5:
-    col_df5, col_api5 = st.columns([3, 2], gap="large")
-
-    with col_api5:
-        st.subheader(tr["tab5_subheader_api"])
-        st.markdown(tr["tab5_api_desc"])
-
-    with col_df5:
-        st.subheader(tr["tab5_subheader_df"])
-        st.caption(tr["tab5_hint"])
-
-        # 全ラップの集計 DataFrame を作成
-        _laps_records = []
-        for _m in laps:
-            _df_m = load_csv(_m.path)
-            _laps_records.append({
-                "lap": _m.lap_no,
-                "time": _m.lap_time_display,
-                "time_ms": _m.lap_time_ms,
-                "max_speed": float(_df_m["speed_kmh"].max()),
-                "avg_speed": float(_df_m["speed_kmh"].mean()),
-                "throttle_avg": float(_df_m["throttle_pct"].mean()),
-                "brake_avg": float(_df_m["brake_pct"].mean()),
-                "max_rpm": float(_df_m["engine_rpm"].max()),
-                "top_gear": int(_df_m["gear"].max()),
-            })
-        _laps_df5 = pd.DataFrame(_laps_records).drop(columns=["time_ms"])
-
-        # サイドバーのラップ選択が変わったとき、テーブルの選択行を強制同期する
-        # (selection_default は初回レンダリング時のみ有効なため、
-        #  session_state を直接書き換えて widget state を上書きする)
-        _sync_key = "tab5_prev_lap_idx"
-        if st.session_state.get(_sync_key) != selected_lap_idx:
-            st.session_state["tab5_df"] = {
-                "selection": {"rows": [selected_lap_idx], "columns": [], "cells": []}
-            }
-            st.session_state[_sync_key] = selected_lap_idx
-
-        _df5_event = st.dataframe(
-            _laps_df5,
-            on_select="rerun",
-            selection_mode="single-row-required",
-            selection_default={"selection": {"rows": [selected_lap_idx], "columns": [], "cells": []}},
-            column_config={
-                "lap": st.column_config.NumberColumn(
-                    label=tr["tab5_col_lap"],
-                    format="%d",
-                    alignment="center",
-                ),
-                "time": st.column_config.TextColumn(
-                    label=tr["tab5_col_time"],
-                    alignment="center",
-                ),
-                "max_speed": st.column_config.NumberColumn(
-                    label=tr["tab5_col_max_speed"],
-                    format="%.0f",
-                    alignment="right",
-                ),
-                "avg_speed": st.column_config.NumberColumn(
-                    label=tr["tab5_col_avg_speed"],
-                    format="%.1f",
-                    alignment="right",
-                ),
-                "throttle_avg": st.column_config.ProgressColumn(
-                    label=tr["tab5_col_throttle"],
-                    min_value=0,
-                    max_value=100,
-                    format="%.1f%%",
-                ),
-                "brake_avg": st.column_config.ProgressColumn(
-                    label=tr["tab5_col_brake"],
-                    min_value=0,
-                    max_value=100,
-                    format="%.1f%%",
-                ),
-                "max_rpm": st.column_config.NumberColumn(
-                    label=tr["tab5_col_rpm"],
-                    format="%.0f",
-                    alignment="right",
-                ),
-                "top_gear": st.column_config.NumberColumn(
-                    label=tr["tab5_col_gear"],
-                    format="%d",
-                    alignment="center",
-                ),
-            },
-            hide_index=True,
-            use_container_width=True,
-            key="tab5_df",
-        )
-
-        # 選択行のチャートを描画
-        _sel5_rows = _df5_event.selection.rows
-        _sel5_idx = _sel5_rows[0] if _sel5_rows else selected_lap_idx
-        _sel5_meta = laps[_sel5_idx]
-        _sel5_df = load_csv(_sel5_meta.path)
-
-        st.caption(
-            tr["tab5_chart_caption"].format(
-                lap_no=_sel5_meta.lap_no,
-                lap_time=_sel5_meta.lap_time_display,
             )
-        )
+            st.iframe(out_html, height=h_val)
 
-        _t5 = _sel5_df.index / len(_sel5_df) * _sel5_meta.lap_time_ms / 1000
-        _fig5 = go.Figure()
-        _fig5.add_trace(go.Scatter(
-            x=_t5,
-            y=_sel5_df["speed_kmh"],
-            name="Speed (km/h)",
-            line=dict(color="#58a6ff", width=1.5),
-            fill="tozeroy",
-            fillcolor="rgba(88,166,255,0.10)",
-        ))
-        _fig5.update_layout(
-            paper_bgcolor="#0d1117",
-            plot_bgcolor="#161b22",
-            font=dict(color="#8b949e"),
-            xaxis=dict(title="Time (s)", gridcolor="#21262d", zerolinecolor="#30363d"),
-            yaxis=dict(title="Speed (km/h)", gridcolor="#21262d", zerolinecolor="#30363d"),
-            height=300,
-            margin=dict(l=60, r=20, t=20, b=60),
-            legend=dict(
-                orientation="h", y=-0.3, bgcolor="rgba(0,0,0,0)",
-                font=dict(color="#c9d1d9"),
-            ),
-        )
-        st.plotly_chart(_fig5, use_container_width=True)
+    # =====================================================
+    # Tab 3: 外部 URL を st.iframe に渡す
+    # =====================================================
+
+    # 富士スピードウェイ周辺の OpenStreetMap embed URL
+    _FUJI_MAP_URL = (
+        "https://www.openstreetmap.org/export/embed.html"
+        "?bbox=138.9066%2C35.3659%2C138.9468%2C35.3835"
+        "&layer=mapnik"
+        "&marker=35.3748%2C138.9267"
+    )
+
+    with tab3:
+        st.subheader(tr["tab3_subheader"])
+        st.markdown(tr["tab3_desc"])
+
+        col_left, col_right = st.columns([3, 1], gap="large")
+        with col_right:
+            ext_height = st.slider(tr["tab3_height_slider"], 300, 1000, 600, step=50, key="tab3_height")
+            map_layer = st.selectbox(
+                tr["tab3_map_layer_label"],
+                options=[tuple(opt) for opt in tr["tab3_map_options"]],
+                format_func=lambda x: x[0],
+                key="tab3_layer",
+            )
+            layer_param = map_layer[1]
+            map_url = (
+                "https://www.openstreetmap.org/export/embed.html"
+                "?bbox=138.9066%2C35.3659%2C138.9468%2C35.3835"
+                f"&layer={layer_param}"
+                "&marker=35.3748%2C138.9267"
+            )
+            st.markdown(
+                tr["tab3_osm_link"],
+                unsafe_allow_html=False,
+            )
+
+        with col_left:
+            st.iframe(map_url, height=ext_height)
+
+    # =====================================================
+    # Tab 4: st.menu_button デモ (ツールバー構築)
+    # =====================================================
+    with tab4:
+        st.subheader(tr["tab4_subheader_toolbar"])
+
+        col_main4, col_api4 = st.columns([3, 2], gap="large")
+
+        with col_api4:
+            st.subheader(tr["tab4_subheader_api"])
+            st.markdown(tr["tab4_api_desc"])
+
+        with col_main4:
+            # --- セッション状態初期化 ---
+            if "mb_chart" not in st.session_state:
+                st.session_state.mb_chart = "speed"
+            if "mb_stat" not in st.session_state:
+                st.session_state.mb_stat = "max"
+
+            # ---- ツールバー行 ----
+            st.markdown(tr["tab4_toolbar_header"])
+            tb1, tb2, tb3, tb4_col, tb_space = st.columns([1.3, 1.5, 1.3, 1.0, 3.0])
+
+            with tb1:
+                export_action = st.menu_button(
+                    tr["tab4_export"],
+                    options=tr["tab4_export_options"],
+                    type="primary",
+                    icon=":material/download:",
+                    help=tr["tab4_export_help"],
+                    key="mb_export",
+                )
+
+            with tb2:
+                _chart_opts_map = tr["tab4_chart_options"]
+                chart_action = st.menu_button(
+                    tr["tab4_chart_switch"],
+                    options=list(_chart_opts_map.keys()),
+                    format_func=lambda x: _chart_opts_map[x],
+                    icon=":material/bar_chart:",
+                    help=tr["tab4_chart_help"],
+                    key="mb_chart_btn",
+                )
+
+            with tb3:
+                _stat_opts_map = tr["tab4_stat_options"]
+                stat_action = st.menu_button(
+                    tr["tab4_stat_line"],
+                    options=list(_stat_opts_map.keys()),
+                    format_func=lambda x: _stat_opts_map[x],
+                    icon=":material/analytics:",
+                    help=tr["tab4_stat_help"],
+                    key="mb_stat_btn",
+                )
+
+            with tb4_col:
+                st.menu_button(
+                    tr["tab4_detail"],
+                    options=tr["tab4_detail_options"],
+                    icon=":material/more_horiz:",
+                    type="tertiary",
+                    disabled=True,
+                    help=tr["tab4_detail_help"],
+                    key="mb_more",
+                )
+
+            # ---- アクション処理 ----
+            if chart_action:
+                st.session_state.mb_chart = chart_action
+            if stat_action:
+                st.session_state.mb_stat = stat_action
+
+            _export_opts = tr["tab4_export_options"]
+            if export_action == _export_opts[0]:
+                csv_bytes = df_selected.to_csv(index=False).encode("utf-8")
+                st.download_button(
+                    tr["tab4_download_csv"],
+                    data=csv_bytes,
+                    file_name=f"telemetry_{selected_meta.circuit}_lap{selected_meta.lap_no}.csv",
+                    mime="text/csv",
+                    key="dl_csv4",
+                )
+            elif export_action == _export_opts[1]:
+                json_bytes = df_selected.to_json(
+                    orient="records", force_ascii=False
+                ).encode("utf-8")
+                st.download_button(
+                    tr["tab4_download_json"],
+                    data=json_bytes,
+                    file_name=f"telemetry_{selected_meta.circuit}_lap{selected_meta.lap_no}.json",
+                    mime="application/json",
+                    key="dl_json4",
+                )
+            elif export_action == _export_opts[2]:
+                out_html4 = REPORTS_DIR / "telemetry_menu.html"
+                with st.spinner(tr["tab4_spinner_html"]):
+                    build_telemetry_html(selected_meta, df_selected, out_html4)
+                st.success(tr["tab4_success_html"].format(out_html=out_html4))
+
+            st.divider()
+
+            # ---- チャート表示 ----
+            _chart_titles_map = tr["tab4_chart_titles"]
+            _chart_meta: dict[str, tuple[str, list[str], list[str]]] = {
+                "speed": (
+                    _chart_titles_map["speed"],
+                    ["speed_kmh"],
+                    ["#58a6ff"],
+                ),
+                "throttle_brake": (
+                    _chart_titles_map["throttle_brake"],
+                    ["throttle_pct", "brake_pct"],
+                    ["#56d364", "#f85149"],
+                ),
+                "rpm_gear": (
+                    _chart_titles_map["rpm_gear"],
+                    ["engine_rpm"],
+                    ["#d2a8ff"],
+                ),
+                "tyre_temp": (
+                    _chart_titles_map["tyre_temp"],
+                    ["tyre_temp_fl", "tyre_temp_fr", "tyre_temp_rl", "tyre_temp_rr"],
+                    ["#79c0ff", "#56d364", "#ffa657", "#f85149"],
+                ),
+            }
+            _stat_labels = tr["tab4_stat_options"]
+
+            cur_chart = st.session_state.mb_chart
+            cur_stat = st.session_state.mb_stat
+            chart_title4, chart_cols4, chart_colors4 = _chart_meta[cur_chart]
+
+            st.caption(
+                tr["tab4_chart_caption"].format(
+                    chart_title=chart_title4, stat_label=_stat_labels[cur_stat]
+                )
+            )
+
+            t_axis = (
+                df_selected.index / len(df_selected) * selected_meta.lap_time_ms / 1000
+            )
+            fig4 = go.Figure()
+
+            for col_name, color in zip(chart_cols4, chart_colors4):
+                r, g, b = int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
+                fig4.add_trace(
+                    go.Scatter(
+                        x=t_axis,
+                        y=df_selected[col_name],
+                        name=col_name,
+                        line=dict(color=color, width=1.5),
+                        fill="tozeroy",
+                        fillcolor=f"rgba({r},{g},{b},0.10)",
+                    )
+                )
+                if cur_stat == "max":
+                    stat_val = float(df_selected[col_name].max())
+                elif cur_stat == "mean":
+                    stat_val = float(df_selected[col_name].mean())
+                else:
+                    stat_val = float(df_selected[col_name].min())
+
+                fig4.add_hline(
+                    y=stat_val,
+                    line_dash="dash",
+                    line_color=color,
+                    opacity=0.6,
+                    annotation_text=tr["tab4_stat_annotation"].format(
+                        stat_label=_stat_labels[cur_stat], stat_val=f"{stat_val:.1f}"
+                    ),
+                    annotation_position="top right",
+                    annotation_font_color=color,
+                )
+
+            fig4.update_layout(
+                paper_bgcolor="#0d1117",
+                plot_bgcolor="#161b22",
+                font=dict(color="#8b949e"),
+                xaxis=dict(
+                    title="Time (s)", gridcolor="#21262d", zerolinecolor="#30363d"
+                ),
+                yaxis=dict(
+                    title=chart_title4, gridcolor="#21262d", zerolinecolor="#30363d"
+                ),
+                height=420,
+                margin=dict(l=60, r=20, t=20, b=60),
+                legend=dict(
+                    orientation="h",
+                    y=-0.18,
+                    bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#c9d1d9"),
+                ),
+            )
+            st.plotly_chart(fig4, use_container_width=True)
+
+            # ---- type パラメータ比較デモ ----
+            st.divider()
+            st.markdown(tr["tab4_type_comparison"])
+            tc1, tc2, tc3 = st.columns(3)
+            for col_t, type_val in zip([tc1, tc2, tc3], ["primary", "secondary", "tertiary"]):
+                with col_t:
+                    res = st.menu_button(
+                        type_val,
+                        options=tr["tab4_item_options"],
+                        type=type_val,  # type: ignore[arg-type]
+                        width="stretch",
+                        key=f"type_demo_{type_val}",
+                    )
+                    if res:
+                        st.caption(tr["tab4_selection_caption"].format(res=res))
+
+    # =====================================================
+    # Tab 5: st.dataframe 新機能
+    #   - selection_mode="single-row-required"
+    #   - selection={"rows": [N]}  (初期選択行をプログラム指定)
+    #   - column_config の alignment パラメータ
+    # =====================================================
+    with tab5:
+        col_df5, col_api5 = st.columns([3, 2], gap="large")
+
+        with col_api5:
+            st.subheader(tr["tab5_subheader_api"])
+            st.markdown(tr["tab5_api_desc"])
+
+        with col_df5:
+            st.subheader(tr["tab5_subheader_df"])
+            st.caption(tr["tab5_hint"])
+
+            # 全ラップの集計 DataFrame を作成
+            _laps_records = []
+            for _m in laps:
+                _df_m = load_csv(_m.path)
+                _laps_records.append({
+                    "lap": _m.lap_no,
+                    "time": _m.lap_time_display,
+                    "time_ms": _m.lap_time_ms,
+                    "max_speed": float(_df_m["speed_kmh"].max()),
+                    "avg_speed": float(_df_m["speed_kmh"].mean()),
+                    "throttle_avg": float(_df_m["throttle_pct"].mean()),
+                    "brake_avg": float(_df_m["brake_pct"].mean()),
+                    "max_rpm": float(_df_m["engine_rpm"].max()),
+                    "top_gear": int(_df_m["gear"].max()),
+                })
+            _laps_df5 = pd.DataFrame(_laps_records).drop(columns=["time_ms"])
+
+            # サイドバーのラップ選択が変わったとき、テーブルの選択行を強制同期する
+            # (selection_default は初回レンダリング時のみ有効なため、
+            #  session_state を直接書き換えて widget state を上書きする)
+            _sync_key = "tab5_prev_lap_idx"
+            if st.session_state.get(_sync_key) != selected_lap_idx:
+                st.session_state["tab5_df"] = {
+                    "selection": {"rows": [selected_lap_idx], "columns": [], "cells": []}
+                }
+                st.session_state[_sync_key] = selected_lap_idx
+
+            _df5_event = st.dataframe(
+                _laps_df5,
+                on_select="rerun",
+                selection_mode="single-row-required",
+                selection_default={"selection": {"rows": [selected_lap_idx], "columns": [], "cells": []}},
+                column_config={
+                    "lap": st.column_config.NumberColumn(
+                        label=tr["tab5_col_lap"],
+                        format="%d",
+                        alignment="center",
+                    ),
+                    "time": st.column_config.TextColumn(
+                        label=tr["tab5_col_time"],
+                        alignment="center",
+                    ),
+                    "max_speed": st.column_config.NumberColumn(
+                        label=tr["tab5_col_max_speed"],
+                        format="%.0f",
+                        alignment="right",
+                    ),
+                    "avg_speed": st.column_config.NumberColumn(
+                        label=tr["tab5_col_avg_speed"],
+                        format="%.1f",
+                        alignment="right",
+                    ),
+                    "throttle_avg": st.column_config.ProgressColumn(
+                        label=tr["tab5_col_throttle"],
+                        min_value=0,
+                        max_value=100,
+                        format="%.1f%%",
+                    ),
+                    "brake_avg": st.column_config.ProgressColumn(
+                        label=tr["tab5_col_brake"],
+                        min_value=0,
+                        max_value=100,
+                        format="%.1f%%",
+                    ),
+                    "max_rpm": st.column_config.NumberColumn(
+                        label=tr["tab5_col_rpm"],
+                        format="%.0f",
+                        alignment="right",
+                    ),
+                    "top_gear": st.column_config.NumberColumn(
+                        label=tr["tab5_col_gear"],
+                        format="%d",
+                        alignment="center",
+                    ),
+                },
+                hide_index=True,
+                use_container_width=True,
+                key="tab5_df",
+            )
+
+            # 選択行のチャートを描画
+            _sel5_rows = _df5_event.selection.rows
+            _sel5_idx = _sel5_rows[0] if _sel5_rows else selected_lap_idx
+            _sel5_meta = laps[_sel5_idx]
+            _sel5_df = load_csv(_sel5_meta.path)
+
+            st.caption(
+                tr["tab5_chart_caption"].format(
+                    lap_no=_sel5_meta.lap_no,
+                    lap_time=_sel5_meta.lap_time_display,
+                )
+            )
+
+            _t5 = _sel5_df.index / len(_sel5_df) * _sel5_meta.lap_time_ms / 1000
+            _fig5 = go.Figure()
+            _fig5.add_trace(go.Scatter(
+                x=_t5,
+                y=_sel5_df["speed_kmh"],
+                name="Speed (km/h)",
+                line=dict(color="#58a6ff", width=1.5),
+                fill="tozeroy",
+                fillcolor="rgba(88,166,255,0.10)",
+            ))
+            _fig5.update_layout(
+                paper_bgcolor="#0d1117",
+                plot_bgcolor="#161b22",
+                font=dict(color="#8b949e"),
+                xaxis=dict(title="Time (s)", gridcolor="#21262d", zerolinecolor="#30363d"),
+                yaxis=dict(title="Speed (km/h)", gridcolor="#21262d", zerolinecolor="#30363d"),
+                height=300,
+                margin=dict(l=60, r=20, t=20, b=60),
+                legend=dict(
+                    orientation="h", y=-0.3, bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#c9d1d9"),
+                ),
+            )
+            st.plotly_chart(_fig5, use_container_width=True)
