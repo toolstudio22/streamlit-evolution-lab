@@ -13,7 +13,8 @@ Usage:
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+import re
+from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -49,17 +50,17 @@ def _load_access_logs(days: int) -> pd.DataFrame:
     """
     client = _get_supabase()
     if client is None:
-        return pd.DataFrame(columns=["date", "hour", "version"])
+        return pd.DataFrame(columns=["date", "hour", "minute", "version", "user_agent"])
 
     try:
-        since = (date.today() - timedelta(days=days - 1)).isoformat()
+        since = (datetime.now(timezone.utc).date() - timedelta(days=days - 1)).isoformat()
         batch_size = 1000
         offset = 0
         all_rows: list[dict] = []
         while True:
             res = (
                 client.table("access_logs")
-                .select("version, accessed_at")
+                .select("version, accessed_at, user_agent")
                 .gte("accessed_at", since)
                 .order("accessed_at")
                 .range(offset, offset + batch_size - 1)
@@ -73,17 +74,20 @@ def _load_access_logs(days: int) -> pd.DataFrame:
             offset += batch_size
 
         if not all_rows:
-            return pd.DataFrame(columns=["date", "version"])
+            return pd.DataFrame(columns=["date", "hour", "minute", "version", "user_agent"])
 
         df = pd.DataFrame(all_rows)
         df["accessed_at"] = pd.to_datetime(df["accessed_at"], utc=True).dt.tz_convert("Asia/Tokyo")
         df["date"] = df["accessed_at"].dt.date
         # tz_localize(None) でタイムゾーン情報を除去（st.bar_chart / st.line_chart が tz-naive を要求するため）
         df["hour"] = df["accessed_at"].dt.floor("h").dt.tz_localize(None)
-        return df[["date", "hour", "version"]]
+        df["minute"] = df["accessed_at"].dt.minute
+        if "user_agent" not in df.columns:
+            df["user_agent"] = pd.NA
+        return df[["date", "hour", "minute", "version", "user_agent"]]
 
     except Exception:
-        return pd.DataFrame(columns=["date", "hour", "version"])
+        return pd.DataFrame(columns=["date", "hour", "minute", "version", "user_agent"])
 
 
 # ---------------------------------------------------------------------------
@@ -103,6 +107,7 @@ st.title("📊 アクセス推移ダッシュボード")
 with st.sidebar:
     st.header("フィルター")
     days = st.slider("表示期間（日）", min_value=7, max_value=90, value=30, step=1)
+    exclude_bots = st.toggle("ボット・監視ツールを除外", value=True)
 
     st.divider()
     if st.button("🔄 データ再取得", use_container_width=True):
@@ -132,7 +137,40 @@ if df.empty:
     st.stop()
 
 # ---------------------------------------------------------------------------
-# 集計: 日次
+# ボット除外フィルタ
+# ---------------------------------------------------------------------------
+# 単語境界付きの汎用パターン + 具体的な監視サービス名
+_BOT_UA_RE = re.compile(
+    r"\b(bot|spider|crawler)\b"
+    r"|uptimerobot|pingdom|statuscake|better\s*uptime|freshping"
+    r"|hetrixtools|hyperping|cronitor",
+    re.IGNORECASE,
+)
+
+# UA なし行のボット判定: 1 時間内に同じ minute % 5 の余りが X 回以上 → ボット
+_BOT_HOURLY_THRESHOLD = 8
+
+if exclude_bots:
+    # user_agent が記録されている行はパターンで判定
+    ua_col = df["user_agent"].fillna("")
+    is_known_bot = ua_col.str.contains(_BOT_UA_RE, na=False)
+    # user_agent が空の行は時間帯ごとに minute % 5 の余りを分析する
+    # 1時間あたり同じ余りが 8 回以上出現 → その余りの行だけをボットとみなす
+    # （同時間帯の実ユーザーアクセスは別の余りのため残る）
+    no_ua = ua_col.eq("")
+    if no_ua.sum() > 0:
+        df_tmp = df.assign(_rem=df["minute"] % 5)
+        bot_mask = pd.Series(False, index=df.index)
+        for hour, grp in df_tmp[no_ua].groupby("hour"):
+            rem_counts = grp["_rem"].value_counts()
+            bot_rems = rem_counts[rem_counts >= _BOT_HOURLY_THRESHOLD].index
+            if len(bot_rems) > 0:
+                in_hour = no_ua & (df_tmp["hour"] == hour)
+                bot_mask |= in_hour & df_tmp["_rem"].isin(bot_rems)
+        is_legacy_bot = bot_mask
+    else:
+        is_legacy_bot = pd.Series(False, index=df.index)
+    df = df[~(is_known_bot | is_legacy_bot)]
 # ---------------------------------------------------------------------------
 daily = (
     df.groupby(["date", "version"])
@@ -150,6 +188,15 @@ pivot = (
 pivot.index = pd.to_datetime(pivot.index)
 pivot = pivot.sort_index()
 pivot.columns.name = None
+
+# アクセスゼロの日付を補完して連続した日付軸にする
+_today = datetime.now(timezone.utc).date()
+_all_dates = pd.date_range(
+    start=_today - timedelta(days=days - 1),
+    end=_today,
+    freq="D",
+)
+pivot = pivot.reindex(_all_dates, fill_value=0)
 
 versions = list(pivot.columns)
 total_accesses = int(pivot.values.sum())
