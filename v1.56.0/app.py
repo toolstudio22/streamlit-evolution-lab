@@ -1126,6 +1126,16 @@ if __spec__ is None:  # type: ignore[name-defined]
     )
     st.sidebar.divider()
 
+    # --- アクセスカウンター（バージョン切替に関わらず常時表示）---
+    if "_visited" not in st.session_state:
+        st.session_state["_visited"] = True
+        try:
+            _is_cloud = st.secrets.get("ENVIRONMENT") == "cloud"
+        except Exception:
+            _is_cloud = False
+        if _is_cloud:
+            _increment_counter(_THIS_VERSION)
+
     _selected = st.session_state["version_selector"]
     if _selected == _THIS_VERSION:
         show()
@@ -1141,3 +1151,12 @@ if __spec__ is None:  # type: ignore[name-defined]
             _spec.loader.exec_module(_mod)  # type: ignore[union-attr]
             if hasattr(_mod, "show"):
                 _mod.show()
+
+    # サイドバー最下部にアクセスカウンターを表示
+    _counts = _load_counts()
+    st.sidebar.divider()
+    if _counts:
+        st.sidebar.metric(label="📊 総アクセス数", value=f"{sum(_counts.values()):,}")
+    else:
+        st.sidebar.caption("📊 総アクセス数")
+        st.sidebar.caption("（Supabase 接続後に集計されます）")
