@@ -622,28 +622,6 @@ def show() -> None:
             )
         )
 
-        # -----------------------------------------------------------------------
-        # アクセスカウンター（セッション先頭で 1 回 Supabase に記録）
-        # -----------------------------------------------------------------------
-        st.divider()
-        if "_visited" not in st.session_state:
-            st.session_state["_visited"] = True
-            # secrets.toml が存在しないローカル環境では StreamlitSecretNotFoundError が
-            # 発生するため try/except でガードし、クラウド外とみなす
-            try:
-                _is_cloud = st.secrets.get("ENVIRONMENT") == "cloud"
-            except Exception:
-                _is_cloud = False
-            if _is_cloud:
-                _increment_counter(_THIS_VERSION)
-        counts = _load_counts()
-        if counts:
-            total = sum(counts.values())
-            st.metric(label=tr["sidebar_access_count"], value=f"{total:,}")
-        else:
-            st.caption(tr["sidebar_access_count"])
-            st.caption(tr["sidebar_access_count_pending"])
-
     df_selected = load_csv(selected_meta.path)
 
     # ---------------------------------------------------------------------------
@@ -1146,6 +1124,23 @@ if __spec__ is None:  # type: ignore[name-defined]
         key="version_selector",
         help="デモを確認したい Streamlit バージョンを選択してください。",
     )
+    st.sidebar.divider()
+
+    # --- アクセスカウンター（バージョン切替に関わらず常時表示）---
+    if "_visited" not in st.session_state:
+        st.session_state["_visited"] = True
+        try:
+            _is_cloud = st.secrets.get("ENVIRONMENT") == "cloud"
+        except Exception:
+            _is_cloud = False
+        if _is_cloud:
+            _increment_counter(_THIS_VERSION)
+    _counts = _load_counts()
+    if _counts:
+        st.sidebar.metric(label="📊 総アクセス数", value=f"{sum(_counts.values()):,}")
+    else:
+        st.sidebar.caption("📊 総アクセス数")
+        st.sidebar.caption("（Supabase 接続後に集計されます）")
     st.sidebar.divider()
 
     _selected = st.session_state["version_selector"]
