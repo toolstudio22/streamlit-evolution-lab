@@ -56,13 +56,24 @@ def _get_supabase():
         return None
 
 
+_BOT_UA_PATTERNS = (
+    "uptimerobot", "pingdom", "statuscake", "better uptime", "freshping",
+    "hetrixtools", "hyperping", "cronitor", "bot", "spider", "crawler",
+    "monitor", "check", "health",
+)
+
+
 def _increment_counter(version: str) -> None:
     """access_logs テーブルに 1 行 INSERT する。失敗時はサイレントに無視。"""
     client = _get_supabase()
     if client is None:
         return
     try:
-        client.table("access_logs").insert({"version": version}).execute()
+        ua: str = st.context.headers.get("User-Agent") or ""
+        ua_lower = ua.lower()
+        if any(pattern in ua_lower for pattern in _BOT_UA_PATTERNS):
+            return
+        client.table("access_logs").insert({"version": version, "user_agent": ua}).execute()
     except Exception:
         pass
 
@@ -73,8 +84,23 @@ def _load_counts() -> dict[str, int]:
     if client is None:
         return {}
     try:
-        res = client.table("access_logs").select("version").execute()
-        return dict(Counter(row["version"] for row in res.data))
+        batch_size = 1000
+        offset = 0
+        all_rows: list[dict] = []
+        while True:
+            res = (
+                client.table("access_logs")
+                .select("version")
+                .range(offset, offset + batch_size - 1)
+                .execute()
+            )
+            if not res.data:
+                break
+            all_rows.extend(res.data)
+            if len(res.data) < batch_size:
+                break
+            offset += batch_size
+        return dict(Counter(row["version"] for row in all_rows))
     except Exception:
         return {}
 
