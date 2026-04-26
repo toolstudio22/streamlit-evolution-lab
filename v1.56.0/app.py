@@ -56,11 +56,13 @@ def _get_supabase():
         return None
 
 
-_BOT_UA_PATTERNS = (
-    "uptimerobot", "pingdom", "statuscake", "better uptime", "freshping",
-    "hetrixtools", "hyperping", "cronitor", "bot", "spider", "crawler",
-    "monitor", "check", "health",
+_BOT_UA_RE = re.compile(
+    r"\b(bot|spider|crawler)\b"
+    r"|uptimerobot|pingdom|statuscake|better\s*uptime|freshping"
+    r"|hetrixtools|hyperping|cronitor|monitor|check|health",
+    re.IGNORECASE,
 )
+_BOT_HOURLY_THRESHOLD = 8
 
 
 def _increment_counter(version: str) -> None:
@@ -70,8 +72,7 @@ def _increment_counter(version: str) -> None:
         return
     try:
         ua: str = st.context.headers.get("User-Agent") or ""
-        ua_lower = ua.lower()
-        if any(pattern in ua_lower for pattern in _BOT_UA_PATTERNS):
+        if _BOT_UA_RE.search(ua):
             return
         client.table("access_logs").insert({"version": version, "user_agent": ua}).execute()
     except Exception:
@@ -79,7 +80,7 @@ def _increment_counter(version: str) -> None:
 
 
 def _load_counts() -> dict[str, int]:
-    """全バージョンのアクセス数を {version: total} 形式で返す。"""
+    """全バージョンのアクセス数をボット除外した上で {version: total} 形式で返す。"""
     client = _get_supabase()
     if client is None:
         return {}
@@ -90,7 +91,7 @@ def _load_counts() -> dict[str, int]:
         while True:
             res = (
                 client.table("access_logs")
-                .select("version")
+                .select("version, accessed_at, user_agent")
                 .range(offset, offset + batch_size - 1)
                 .execute()
             )
@@ -100,7 +101,36 @@ def _load_counts() -> dict[str, int]:
             if len(res.data) < batch_size:
                 break
             offset += batch_size
-        return dict(Counter(row["version"] for row in all_rows))
+
+        if not all_rows:
+            return {}
+
+        df = pd.DataFrame(all_rows)
+        df["accessed_at"] = pd.to_datetime(df["accessed_at"], utc=True).dt.tz_convert("Asia/Tokyo")
+        df["hour"] = df["accessed_at"].dt.floor("h").dt.tz_localize(None)
+        df["minute"] = df["accessed_at"].dt.minute
+
+        # user_agent ありの行: 正規表現でボット判定
+        ua_col = df["user_agent"].fillna("")
+        is_known_bot = ua_col.str.contains(_BOT_UA_RE, na=False)
+
+        # user_agent なしの旧データ: 時間帯ごとに minute%5 の余りが閾値以上 → ボット行を除外
+        no_ua = ua_col.eq("")
+        if no_ua.sum() > 0:
+            df_tmp = df.assign(_rem=df["minute"] % 5)
+            bot_mask = pd.Series(False, index=df.index)
+            for hour, grp in df_tmp[no_ua].groupby("hour"):
+                rem_counts = grp["_rem"].value_counts()
+                bot_rems = rem_counts[rem_counts >= _BOT_HOURLY_THRESHOLD].index
+                if len(bot_rems) > 0:
+                    in_hour = no_ua & (df_tmp["hour"] == hour)
+                    bot_mask |= in_hour & df_tmp["_rem"].isin(bot_rems)
+            is_legacy_bot = bot_mask
+        else:
+            is_legacy_bot = pd.Series(False, index=df.index)
+
+        df = df[~(is_known_bot | is_legacy_bot)]
+        return dict(Counter(df["version"].tolist()))
     except Exception:
         return {}
 
