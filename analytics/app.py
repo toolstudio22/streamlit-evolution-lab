@@ -216,8 +216,15 @@ hourly_pivot = (
     .fillna(0)
     .astype(int)
 )
-hourly_pivot = hourly_pivot.sort_index()
 hourly_pivot.columns.name = None
+
+# アクセスゼロの時間帯を補完して連続した時間軸にする
+_all_hours = pd.date_range(
+    start=pd.Timestamp(_today - timedelta(days=days - 1)),
+    end=pd.Timestamp(_today) + pd.Timedelta(hours=23),
+    freq="h",
+)
+hourly_pivot = hourly_pivot.reindex(_all_hours, fill_value=0).sort_index()
 
 # ---------------------------------------------------------------------------
 # メトリクスカード
