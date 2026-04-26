@@ -638,9 +638,8 @@ def show() -> None:
                 _increment_counter(_THIS_VERSION)
         counts = _load_counts()
         if counts:
-            st.caption(tr["sidebar_access_count"])
-            for ver, cnt in sorted(counts.items()):
-                st.metric(label=ver, value=cnt)
+            total = sum(counts.values())
+            st.metric(label=tr["sidebar_access_count"], value=f"{total:,}")
         else:
             st.caption(tr["sidebar_access_count"])
             st.caption(tr["sidebar_access_count_pending"])

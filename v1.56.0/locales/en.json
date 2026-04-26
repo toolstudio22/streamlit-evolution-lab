@@ -14,7 +14,7 @@
   "sidebar_no_session": "No session data available.",
   "sidebar_lap_label": "Lap",
   "sidebar_session_detail": "**Session Details**\n- Circuit: `{circuit}`\n- Car: `{car}`\n- Tyre: `{tyre}` / `{condition}`\n- Date: `{date}`\n- Laps: `{lap_count}`",
-  "sidebar_access_count": "📊 Access count by version",
+  "sidebar_access_count": "📊 Total accesses",
   "sidebar_access_count_pending": "(Available after Supabase connection)",
   "error_load_app": "Failed to load `{version}/app.py`.",
   "error_no_show_fn": "`{version}/app.py` does not define a `show()` function.\n\nEach version's `app.py` must expose `def show():`.",

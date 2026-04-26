@@ -14,7 +14,7 @@
   "sidebar_no_session": "利用可能なセッションデータがありません。",
   "sidebar_lap_label": "ラップ",
   "sidebar_session_detail": "**セッション詳細**\n- サーキット: `{circuit}`\n- 車両: `{car}`\n- タイヤ: `{tyre}` / `{condition}`\n- 日時: `{date}`\n- ラップ数: `{lap_count}`",
-  "sidebar_access_count": "📊 バージョン別アクセス数",
+  "sidebar_access_count": "📊 総アクセス数",
   "sidebar_access_count_pending": "（Supabase 接続後に集計されます）",
   "error_load_app": "`{version}/app.py` を読み込めませんでした。",
   "error_no_show_fn": "`{version}/app.py` に `show()` 関数が定義されていません。\n\n各バージョンの `app.py` は `def show():` を公開してください。",
