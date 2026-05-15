@@ -395,14 +395,14 @@ def show() -> None:
                 _title_val = st.text_input(
                     tr["tab1_title_input"],
                     value=tr["tab1_title_placeholder"],
-                    key="alert_title_val",
+                    key=f"alert_title_val_{_lang_display}",
                     disabled=not _use_title,
                 )
             with _ci2:
                 _body_val = st.text_input(
                     tr["tab1_body_input"],
                     value=tr["tab1_body_placeholder"],
-                    key="alert_body_val",
+                    key=f"alert_body_val_{_lang_display}",
                 )
 
             _alert_fn_map = {
