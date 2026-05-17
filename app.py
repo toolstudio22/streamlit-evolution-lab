@@ -166,6 +166,14 @@ if not _available_versions:
     )
     st.stop()
 
+# Community Cloud のスリープ復帰時に古い version_selector が残る問題を防ぐ。
+# 既知の最新バージョンが変わった場合（= 新バージョンが追加された）は
+# version_selector を最新にリセットする。
+_latest_version = _available_versions[0]
+if st.session_state.get("_known_latest") != _latest_version:
+    st.session_state["_known_latest"] = _latest_version
+    st.session_state["version_selector"] = _latest_version
+
 st.sidebar.selectbox(
     "🔖 Streamlit Version",
     _available_versions,
